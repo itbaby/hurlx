@@ -52,6 +52,7 @@ var (
 	flagPretty          bool
 	flagNoPretty        bool
 	flagRepeat          int
+	flagTrace           bool
 )
 
 type arrayFlags []string
@@ -112,6 +113,7 @@ func init() {
 	flag.BoolVar(&flagPretty, "pretty", false, "Prettify output")
 	flag.BoolVar(&flagNoPretty, "no-pretty", false, "No prettify")
 	flag.IntVar(&flagRepeat, "repeat", 1, "Repeat count")
+	flag.BoolVar(&flagTrace, "trace", false, "Trace each chain step result as JSON")
 }
 
 func main() {
@@ -230,6 +232,7 @@ func main() {
 				HTTPVersion:     flagHTTPVersion,
 				User:            flagUser,
 				UserAgent:       flagUserAgent,
+				Trace:           flagTrace,
 			}
 
 			r := runner.NewRunner(opts)

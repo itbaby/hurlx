@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"crypto/tls"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -48,6 +49,7 @@ type RunOptions struct {
 	HTTPVersion     string
 	User            string
 	UserAgent       string
+	Trace           bool
 }
 
 type RunResult struct {
@@ -166,6 +168,10 @@ func (r *Runner) Run(entries []ast.Entry) (*RunResult, error) {
 
 		result.Entries = append(result.Entries, *entryResult)
 
+		if r.options.Trace {
+			r.traceEntry(entryResult)
+		}
+
 		if err != nil {
 			if !r.options.ContinueOnError {
 				return result, err
@@ -178,6 +184,37 @@ func (r *Runner) Run(entries []ast.Entry) (*RunResult, error) {
 	}
 
 	return result, nil
+}
+
+func (r *Runner) traceEntry(e *EntryResult) {
+	trace := map[string]interface{}{
+		"entry":    e.EntryIndex + 1,
+		"duration": int64(e.Duration / time.Millisecond),
+	}
+
+	if e.Request != nil {
+		trace["method"] = e.Request.Method
+		trace["url"] = e.Request.URL.String()
+	}
+
+	if e.Response != nil {
+		trace["status"] = e.Response.StatusCode
+	}
+
+	if e.Body != nil {
+		trace["body"] = string(e.Body)
+	}
+
+	if e.Error != nil {
+		trace["error"] = e.Error.Error()
+	}
+
+	if len(e.Captures) > 0 {
+		trace["captures"] = e.Captures
+	}
+
+	data, _ := json.MarshalIndent(trace, "", "  ")
+	r.logger.Printf("[trace] %s\n", string(data))
 }
 
 func (r *Runner) runEntry(index int, entry ast.Entry) (*EntryResult, error) {

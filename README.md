@@ -258,6 +258,7 @@ HTTP 204
 
 ### Advanced Features
 - Variable chaining
+- Chain trace (`--trace`)
 - Conditional assertions
 - Retry mechanism
 - Redirect tracking
@@ -333,6 +334,35 @@ hurlx --variable host=api.example.com api.hurlx
 hurlx --variables-file env.json api.hurlx
 ```
 
+### Chain Trace
+
+When using `import` or chaining multiple requests, use `--trace` to print each step's result as JSON to stderr:
+
+```bash
+hurlx --trace api.hurlx
+```
+
+Example output (stderr):
+```json
+[trace] {
+  "entry": 1,
+  "method": "POST",
+  "url": "https://api.example.com/login",
+  "status": 200,
+  "body": "{\"token\":\"abc123\"}",
+  "captures": {"token": "abc123"},
+  "duration": 150
+}
+[trace] {
+  "entry": 2,
+  "method": "GET",
+  "url": "https://api.example.com/users",
+  "status": 200,
+  "body": "[{\"id\":1}]",
+  "duration": 80
+}
+```
+
 ### Import/Export Example
 
 ```hurlx
@@ -380,6 +410,7 @@ Options:
   --json                  JSON output
   --test                  Test mode (assertions only)
   --timeout, -m           Maximum time per request
+  --trace                 Trace each chain step result as JSON
   --retry                 Retry count
   --variable, -V          Define variable
   --variables-file       Load variables from file
