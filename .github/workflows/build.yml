@@ -64,13 +64,19 @@ jobs:
     if: ${{ !startsWith(github.ref, 'refs/heads/') }}
 
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
+        with:
+          path: artifacts
 
       - name: List artifacts structure
         run: |
           ls -la
-          find . -name "hurlx-*" -type f
+          ls -la artifacts
+          find artifacts -name "hurlx-*" -type f
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
@@ -78,6 +84,6 @@ jobs:
           tag_name: ${{ github.ref_name }}
           generate_release_notes: true
           files: |
-            */hurlx-*
+            artifacts/*/hurlx-*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
