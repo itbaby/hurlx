@@ -1,0 +1,19 @@
+import "../modules/auth"
+
+GET {{base_url}}/posts/1
+HTTP 200
+[Captures]
+post_title: jsonpath "$.title"
+
+POST {{base_url}}/posts/add
+Authorization: Bearer {{access_token}}
+Content-Type: application/json
+{
+    "title": "{{post_title}} - hurlx",
+    "body": "Created at {{newDate}}",
+    "userId": {{user_id}}
+}
+HTTP *
+[Asserts]
+jsonpath "$.title" contains "hurlx"
+jsonpath "$.body" contains "Created"

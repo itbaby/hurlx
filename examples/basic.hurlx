@@ -1,0 +1,76 @@
+# Basic GET request
+GET https://httpbin.org/get
+HTTP 200
+
+# POST with JSON body
+POST https://httpbin.org/post
+Content-Type: application/json
+{
+    "name": "Frieda",
+    "age": 3,
+    "breed": "Scottish Terrier"
+}
+HTTP 200
+[Asserts]
+jsonpath "$.json.name" == "Frieda"
+jsonpath "$.json.age" == 3
+
+# Query parameters
+GET https://httpbin.org/get
+[Query]
+order: newest
+count: 100
+search: hurlx
+HTTP 200
+[Asserts]
+jsonpath "$.args.order" == "newest"
+jsonpath "$.args.count" == "100"
+
+# Form data
+POST https://httpbin.org/post
+[Form]
+username: admin
+password: secret123
+HTTP 200
+[Asserts]
+jsonpath "$.form.username" == "admin"
+
+# Basic Auth
+GET https://httpbin.org/basic-auth/admin/secret
+[BasicAuth]
+admin: secret
+HTTP 200
+[Asserts]
+jsonpath "$.authenticated" == true
+
+# Headers and chaining
+GET https://httpbin.org/get
+HTTP 200
+[Captures]
+origin: jsonpath "$.origin"
+
+GET https://httpbin.org/get
+X-Forwarded-For: {{origin}}
+HTTP 200
+[Asserts]
+header "Content-Type" contains "application/json"
+duration < 5000
+
+# Captures and variable reuse
+POST https://httpbin.org/post
+Content-Type: application/json
+{
+    "test_id": "{{newUuid}}",
+    "created_at": "{{newDate}}"
+}
+HTTP 200
+[Captures]
+test_id: jsonpath "$.json.test_id"
+response_url: jsonpath "$.url"
+
+GET https://httpbin.org/get
+[Query]
+id: {{test_id}}
+HTTP 200
+[Asserts]
+jsonpath "$.args.id" == "{{test_id}}"

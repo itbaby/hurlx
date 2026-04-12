@@ -1,0 +1,21 @@
+import token
+
+export api_key = test-api-key-12345
+
+GET {{base_url}}/get
+X-API-Key: {{api_key}}
+HTTP 200
+[Asserts]
+jsonpath "$.headers.X-Api-Key" == "{{api_key}}"
+
+POST {{base_url}}/post
+Content-Type: application/json
+X-API-Key: {{api_key}}
+{
+    "name": "hurlx test",
+    "request_id": "{{token}}"
+}
+HTTP 200
+[Asserts]
+jsonpath "$.json.name" == "hurlx test"
+jsonpath "$.json.request_id" exists

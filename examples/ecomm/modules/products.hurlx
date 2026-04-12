@@ -1,0 +1,7 @@
+import "../modules/auth"
+
+GET {{base_url}}/products/1
+HTTP 200
+[Captures]
+product_name: jsonpath "$.title"
+product_price: jsonpath "$.price"

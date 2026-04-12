@@ -1,0 +1,5 @@
+GET https://httpbin.org/get?foo=bar&baz=qux
+HTTP 200
+[Asserts]
+url urlQueryParam "foo" == "bar"
+url urlQueryParam "baz" == "qux"

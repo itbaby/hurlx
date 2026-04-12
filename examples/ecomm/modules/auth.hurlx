@@ -1,0 +1,13 @@
+import "../common/config"
+
+POST {{base_url}}/auth/login
+Content-Type: application/json
+{
+    "username": "emilys",
+    "password": "emilyspass"
+}
+HTTP 200
+[Captures]
+access_token: jsonpath "$.accessToken"
+refresh_token: jsonpath "$.refreshToken"
+user_id: jsonpath "$.id"

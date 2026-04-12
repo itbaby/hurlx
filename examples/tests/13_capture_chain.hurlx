@@ -1,0 +1,13 @@
+POST https://httpbin.org/post
+Content-Type: application/json
+{"test": "value"}
+HTTP 200
+[Captures]
+origin: jsonpath "$.origin"
+url: jsonpath "$.url"
+
+GET https://httpbin.org/get
+X-Origin: {{origin}}
+HTTP 200
+[Asserts]
+jsonpath "$.headers.X-Origin" == "{{origin}}"

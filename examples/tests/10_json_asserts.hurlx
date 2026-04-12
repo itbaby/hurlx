@@ -1,0 +1,9 @@
+GET https://httpbin.org/json
+HTTP 200
+[Asserts]
+jsonpath "$.slideshow.author" == "Yours Truly"
+jsonpath "$.slideshow.title" exists
+jsonpath "$.slideshow.slides" isList
+jsonpath "$.slideshow.slides" count > 0
+header "Content-Type" contains "json"
+status == 200

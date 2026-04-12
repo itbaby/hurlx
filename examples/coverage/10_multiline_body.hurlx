@@ -1,0 +1,6 @@
+GET https://httpbin.org/robots.txt
+HTTP 200
+```
+User-agent: *
+Disallow: /
+```

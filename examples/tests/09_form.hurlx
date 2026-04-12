@@ -1,0 +1,8 @@
+POST https://httpbin.org/post
+[Form]
+username: admin
+password: secret123
+HTTP 200
+[Asserts]
+jsonpath "$.form.username" == "admin"
+jsonpath "$.form.password" == "secret123"

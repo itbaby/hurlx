@@ -1,0 +1,4 @@
+GET https://httpbin.org/robots.txt
+HTTP 200
+[Asserts]
+body contains "User-agent"

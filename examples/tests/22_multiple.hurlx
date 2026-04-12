@@ -1,0 +1,17 @@
+GET https://httpbin.org/uuid
+HTTP 200
+[Captures]
+id1: jsonpath "$.uuid"
+
+GET https://httpbin.org/uuid
+HTTP 200
+[Captures]
+id2: jsonpath "$.uuid"
+
+POST https://httpbin.org/post
+Content-Type: application/json
+{"id1": "{{id1}}", "id2": "{{id2}}"}
+HTTP 200
+[Asserts]
+jsonpath "$.json.id1" == "{{id1}}"
+jsonpath "$.json.id2" == "{{id2}}"

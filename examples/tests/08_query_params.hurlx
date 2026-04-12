@@ -1,0 +1,8 @@
+GET https://httpbin.org/get
+[Query]
+page: 2
+size: 10
+HTTP 200
+[Asserts]
+jsonpath "$.args.page" == "2"
+jsonpath "$.args.size" == "10"

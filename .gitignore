@@ -1,0 +1,33 @@
+# Binaries
+hurlx
+hurlx.exe
+*.exe
+
+# Go
+*.test
+*.out
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test artifacts
+test.txt
+
+# Output files
+output/
+*.log
+
+# Build artifacts
+dist/
+bin/
+
+# Environment files (if containing secrets)
+.env
+.env.local

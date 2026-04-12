@@ -1,0 +1,4 @@
+POST https://httpbin.org/post
+[FormParams]
+name: test
+HTTP 200

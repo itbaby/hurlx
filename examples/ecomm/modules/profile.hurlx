@@ -1,0 +1,10 @@
+import "../common/config"
+import "auth"
+
+GET {{base_url}}/auth/me
+Authorization: Bearer {{access_token}}
+HTTP 200
+[Captures]
+email: jsonpath "$.email"
+first_name: jsonpath "$.firstName"
+last_name: jsonpath "$.lastName"

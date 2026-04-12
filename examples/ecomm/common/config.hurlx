@@ -1,0 +1,2 @@
+export base_url = https://dummyjson.com
+export api_version = v1
