@@ -61,13 +61,15 @@ jobs:
   release:
     needs: build
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
 
     steps:
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
+          pattern: '*'
+          merge-multiple: true
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
@@ -75,8 +77,6 @@ jobs:
           tag_name: ${{ github.ref_name }}
           generate_release_notes: true
           files: |
-            artifacts/linux-amd64/hurlx-*
-            artifacts/linux-arm64/hurlx-*
-            artifacts/darwin-arm64/hurlx-*
+            artifacts/hurlx-*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
