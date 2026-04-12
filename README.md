@@ -1,4 +1,6 @@
-# hurlx
+<p align="center">
+  <img src="docs/banner.svg" alt="hurlx - Chain · Trace · Conquer" width="100%">
+</p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/version-1.0.8-blue?style=flat-square" alt="Version">
