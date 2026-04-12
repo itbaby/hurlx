@@ -13,12 +13,14 @@ import (
 var lastTagRegex = regexp.MustCompile(`</\w+>`)
 
 type Parser struct {
-	scanner *bufio.Scanner
-	line    int
-	col     int
-	lineStr string
-	pos     int
-	file    string
+	scanner  *bufio.Scanner
+	line     int
+	col      int
+	lineStr  string
+	pos      int
+	file     string
+	bufLine  string
+	bufReady bool
 }
 
 func NewParser(input string, filePath string) *Parser {
@@ -85,6 +87,11 @@ func (p *Parser) Parse() (*ast.File, error) {
 }
 
 func (p *Parser) nextLine() bool {
+	if p.bufReady {
+		p.bufReady = false
+		p.pos = 0
+		return true
+	}
 	if !p.scanner.Scan() {
 		return false
 	}
@@ -92,6 +99,11 @@ func (p *Parser) nextLine() bool {
 	p.lineStr = p.scanner.Text()
 	p.pos = 0
 	return true
+}
+
+func (p *Parser) unreadLine() {
+	p.bufLine = p.lineStr
+	p.bufReady = true
 }
 
 func (p *Parser) currentLine() string {
@@ -242,16 +254,22 @@ func (p *Parser) parseRequest() (*ast.Request, error) {
 		switch {
 		case line == "[Options]":
 			req.Options = p.parseOptionsSection()
+			p.pos = len(p.lineStr)
 		case line == "[QueryStringParams]" || line == "[Query]":
 			req.Query = p.parseKeyValueSection()
+			p.pos = len(p.lineStr)
 		case line == "[FormParams]" || line == "[Form]":
 			req.Form = p.parseKeyValueSection()
+			p.pos = len(p.lineStr)
 		case line == "[Multipart]" || line == "[MultipartFormData]":
 			req.Multipart = p.parseMultipartSection()
+			p.pos = len(p.lineStr)
 		case line == "[Cookies]":
 			req.Cookies = p.parseKeyValueSection()
+			p.pos = len(p.lineStr)
 		case line == "[BasicAuth]":
 			req.BasicAuth = p.parseBasicAuth()
+			p.pos = len(p.lineStr)
 		case isSection(line):
 			return req, nil
 		case isBodyStart(line) || looksLikeBody(line):
@@ -286,6 +304,7 @@ func (p *Parser) parseKeyValueSection() []ast.KeyValue {
 	for p.nextLine() {
 		line := p.currentLine()
 		if line == "" || isSection(line) || isMethod(line) || isResponseStatus(line) || strings.HasPrefix(line, "[") {
+			p.unreadLine()
 			return kvs
 		}
 		idx := strings.Index(line, ":")
@@ -304,6 +323,7 @@ func (p *Parser) parseMultipartSection() []ast.MultipartField {
 	for p.nextLine() {
 		line := p.currentLine()
 		if line == "" || isSection(line) || isMethod(line) || isResponseStatus(line) {
+			p.unreadLine()
 			return fields
 		}
 		idx := strings.Index(line, ":")
@@ -356,6 +376,7 @@ func (p *Parser) parseOptionsSection() *ast.OptionsSection {
 	for p.nextLine() {
 		line := p.currentLine()
 		if line == "" || isSection(line) || isMethod(line) || isResponseStatus(line) {
+			p.unreadLine()
 			return opts
 		}
 		idx := strings.Index(line, ":")
@@ -618,12 +639,14 @@ func (p *Parser) parseResponse() (*ast.Response, error) {
 				return nil, err
 			}
 			resp.Captures = captures
+			p.pos = len(p.lineStr)
 		case line == "[Asserts]":
 			asserts, err := p.parseAsserts()
 			if err != nil {
 				return nil, err
 			}
 			resp.Asserts = asserts
+			p.pos = len(p.lineStr)
 		case isSection(line):
 			return resp, nil
 		case isBodyStart(line):
@@ -656,6 +679,7 @@ func (p *Parser) parseCaptures() ([]ast.Capture, error) {
 	for p.nextLine() {
 		line := p.currentLine()
 		if line == "" || isSection(line) || isMethod(line) || isResponseStatus(line) {
+			p.unreadLine()
 			return captures, nil
 		}
 
@@ -701,6 +725,7 @@ func (p *Parser) parseAsserts() ([]ast.Assert, error) {
 	for p.nextLine() {
 		line := p.currentLine()
 		if line == "" || isSection(line) || isMethod(line) || isResponseStatus(line) {
+			p.unreadLine()
 			return asserts, nil
 		}
 

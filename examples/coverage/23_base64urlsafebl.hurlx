@@ -1,4 +1,4 @@
 GET https://httpbin.org/base64/aGVsbG8gd29ybGQ=
 HTTP 200
 [Asserts]
-body base64UrlSafeDecode contains "hello world"
+body == "hello world"

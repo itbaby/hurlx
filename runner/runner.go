@@ -574,6 +574,9 @@ func (r *Runner) processResponse(index int, respDef *ast.Response, result *Entry
 		}
 
 		exists := value != nil
+		if str, ok := value.(string); ok && str == "" {
+			exists = false
+		}
 		if assert.Predicate == ast.PredExists {
 			if err := r.checkAssert(index, assert, value, exists); err != nil {
 				if !r.options.ContinueOnError {
@@ -605,7 +608,7 @@ func (r *Runner) evaluateQuery(query ast.Query, resp *http.Response, body []byte
 	case ast.QueryStatus:
 		return resp.StatusCode, nil
 	case ast.QueryVersion:
-		return resp.Proto, nil
+		return strings.TrimPrefix(resp.Proto, "HTTP/"), nil
 	case ast.QueryHeader:
 		return resp.Header.Get(query.Value), nil
 	case ast.QueryBody:

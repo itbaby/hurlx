@@ -430,7 +430,7 @@ func filterBase64UrlSafeDecode(value interface{}) (interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
-	return decoded, nil
+	return string(decoded), nil
 }
 
 func filterBase64UrlSafeEncode(value interface{}) (interface{}, error) {
@@ -486,10 +486,18 @@ func encodeBase64URLSafe(data []byte) string {
 func parseDate(s string, format string) (time.Time, error) {
 	goFormat := hurlFormatToGo(format)
 	t, err := time.Parse(goFormat, s)
-	if err != nil {
-		return time.Time{}, fmt.Errorf("toDate: cannot parse %q with format %q: %w", s, format, err)
+	if err == nil {
+		return t, nil
 	}
-	return t, nil
+	t, err = time.Parse(goFormat+" MST", s)
+	if err == nil {
+		return t, nil
+	}
+	t, err = time.Parse(goFormat+" -0700", s)
+	if err == nil {
+		return t, nil
+	}
+	return time.Time{}, fmt.Errorf("toDate: cannot parse %q with format %q", s, format)
 }
 
 func formatDate(t time.Time, format string) string {
@@ -501,7 +509,32 @@ func hurlFormatToGo(format string) string {
 	if format == "%+" {
 		return time.RFC3339
 	}
-	return format
+	replacements := []struct {
+		strftime string
+		goFmt    string
+	}{
+		{"%Y", "2006"},
+		{"%m", "01"},
+		{"%d", "02"},
+		{"%H", "15"},
+		{"%M", "04"},
+		{"%S", "05"},
+		{"%z", "-0700"},
+		{"%Z", "MST"},
+		{"%a", "Mon"},
+		{"%A", "Monday"},
+		{"%b", "Jan"},
+		{"%B", "January"},
+		{"%I", "03"},
+		{"%p", "PM"},
+		{"%j", "002"},
+		{"%W", "Mon"},
+	}
+	result := format
+	for _, r := range replacements {
+		result = strings.ReplaceAll(result, r.strftime, r.goFmt)
+	}
+	return result
 }
 
 func toTime(value interface{}) (time.Time, error) {

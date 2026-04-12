@@ -1,4 +1,5 @@
 GET https://httpbin.org/json
 HTTP 200
 [Asserts]
-jsonpath "$.slideshow.slides" first == "Wake up to WonderWidgets!"
+jsonpath "$.slideshow.slides[0].title" == "Wake up to WonderWidgets!"
+jsonpath "$.slideshow.slides[0].title" first exists

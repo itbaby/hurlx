@@ -1,6 +1,6 @@
 GET https://httpbin.org/headers
 HTTP 200
 [Captures]
-content_type: header "Content-Type" regex "([\\w/]+)"
+content_type: header "Content-Type" regex "([A-Za-z]+/[A-Za-z]+)"
 [Asserts]
 variable "content_type" == "application/json"

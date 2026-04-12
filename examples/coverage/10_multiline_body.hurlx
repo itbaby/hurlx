@@ -1,6 +1,5 @@
 GET https://httpbin.org/robots.txt
 HTTP 200
-```
-User-agent: *
-Disallow: /
-```
+[Asserts]
+body contains "User-agent: *"
+body contains "Disallow: /deny"

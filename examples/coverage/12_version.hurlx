@@ -1,4 +1,4 @@
 GET https://httpbin.org/get
 HTTP *
 [Asserts]
-version matches "1\\.1"
+version contains "1.1"

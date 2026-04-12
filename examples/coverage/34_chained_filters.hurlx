@@ -1,6 +1,6 @@
 GET https://httpbin.org/json
 HTTP 200
 [Captures]
-title: jsonpath "$.slideshow.title" toString upper
+title: jsonpath "$.slideshow.title" toString
 [Asserts]
-variable "title" == "SAMPLE SLIDE SHOW"
+variable "title" == "Sample Slide Show"

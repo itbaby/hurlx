@@ -1,6 +1,6 @@
 GET https://httpbin.org/html
 HTTP 200
 [Captures]
-title: xpath "string(//title)"
+heading: xpath "//h1"
 [Asserts]
-variable "title" htmlEscape exists
+variable "heading" htmlEscape exists
