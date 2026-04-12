@@ -35,7 +35,7 @@ jobs:
       - name: Get version
         id: version
         run: |
-          VERSION=$(echo ${{ github.ref_name }} | sed 's/v//')
+          VERSION=$(echo ${{ github.ref_name }} | sed 's/^v//')
           if [ -z "$VERSION" ]; then
             VERSION="dev"
           fi
