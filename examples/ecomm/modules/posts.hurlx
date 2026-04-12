@@ -1,0 +1,11 @@
+import "../common/config"
+import "auth"
+
+GET {{base_url}}/posts
+Authorization: Bearer {{access_token}}
+[Query]
+limit: 5
+select: title,body
+HTTP 200
+[Captures]
+first_post_id: jsonpath "$.posts[0].id"

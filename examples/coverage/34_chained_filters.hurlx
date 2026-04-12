@@ -1,0 +1,6 @@
+GET https://httpbin.org/json
+HTTP 200
+[Captures]
+title: jsonpath "$.slideshow.title" toString upper
+[Asserts]
+variable "title" == "SAMPLE SLIDE SHOW"

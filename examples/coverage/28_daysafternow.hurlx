@@ -1,0 +1,6 @@
+GET https://httpbin.org/get
+HTTP 200
+[Captures]
+date: header "Date"
+[Asserts]
+variable "date" toDate "%a, %d %b %Y %H:%M:%S %z" daysAfterNow exists

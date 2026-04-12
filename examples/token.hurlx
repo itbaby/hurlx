@@ -1,0 +1,10 @@
+export base_url = https://httpbin.org
+
+GET {{base_url}}/get
+HTTP 200
+[Captures]
+token: jsonpath "$.headers.X-Amzn-Trace-Id"
+
+GET {{base_url}}/headers
+X-Request-Id: {{token}}
+HTTP 200

@@ -1,0 +1,4 @@
+GET https://httpbin.org/bytes/0
+HTTP 200
+[Asserts]
+bytes count == 0

@@ -1,0 +1,19 @@
+import "../modules/auth"
+
+POST {{base_url}}/carts/add
+Authorization: Bearer {{access_token}}
+Content-Type: application/json
+{
+    "userId": {{user_id}},
+    "products": [
+        {"id": 1, "quantity": 1}
+    ]
+}
+HTTP *
+[Captures]
+cart_id: jsonpath "$.id"
+
+GET {{base_url}}/carts/user/{{user_id}}
+HTTP 200
+[Asserts]
+jsonpath "$.carts" exists

@@ -1,0 +1,7 @@
+GET https://httpbin.org/get
+HTTP 200
+[Captures]
+ua: jsonpath "$.headers.User-Agent"
+ua_parts: jsonpath "$.headers.User-Agent" split "/" nth 0
+[Asserts]
+variable "ua_parts" exists

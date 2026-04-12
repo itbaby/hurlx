@@ -1,0 +1,6 @@
+import "modules/config.hurlx"
+
+GET {{base_url}}/get
+HTTP 200
+[Asserts]
+header "Content-Type" contains "json"

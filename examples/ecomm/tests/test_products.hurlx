@@ -1,0 +1,9 @@
+import "../modules/auth"
+import "../modules/products"
+
+GET {{base_url}}/products/1
+HTTP 200
+[Asserts]
+jsonpath "$.title" == "{{product_name}}"
+jsonpath "$.price" > 0
+header "Content-Type" contains "json"

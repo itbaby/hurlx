@@ -1,0 +1,11 @@
+import "../modules/auth"
+import "../modules/profile"
+
+GET {{base_url}}/users/{{user_id}}
+Authorization: Bearer {{access_token}}
+HTTP 200
+[Asserts]
+jsonpath "$.email" == "{{email}}"
+jsonpath "$.firstName" == "{{first_name}}"
+jsonpath "$.id" == {{user_id}}
+header "Content-Type" contains "json"

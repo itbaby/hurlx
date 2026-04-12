@@ -1,0 +1,5 @@
+GET https://httpbin.org/html
+HTTP 200
+[Asserts]
+xpath "string(//h1)" exists
+xpath "//p" count > 0

@@ -1,0 +1,4 @@
+POST https://httpbin.org/post
+[MultipartFormData]
+file1: file,data.bin;
+HTTP 200

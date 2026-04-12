@@ -1,0 +1,4 @@
+PUT https://httpbin.org/put
+Content-Type: application/json
+{"id": 1}
+HTTP 200

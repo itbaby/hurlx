@@ -1,0 +1,6 @@
+GET https://httpbin.org/get
+HTTP 200
+[Captures]
+date_header: header "Date"
+[Asserts]
+variable "date_header" isIsoDate

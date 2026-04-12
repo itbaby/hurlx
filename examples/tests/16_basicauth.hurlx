@@ -1,0 +1,6 @@
+GET https://httpbin.org/basic-auth/admin/password
+[BasicAuth]
+admin: password
+HTTP 200
+[Asserts]
+jsonpath "$.authenticated" == true

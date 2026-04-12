@@ -1,0 +1,4 @@
+GET https://httpbin.org/delay/0.5
+HTTP 200
+[Asserts]
+duration < 10000

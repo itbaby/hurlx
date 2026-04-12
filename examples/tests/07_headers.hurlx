@@ -1,0 +1,6 @@
+GET https://httpbin.org/headers
+X-Test-Header: hello-world
+Accept: application/json
+HTTP 200
+[Asserts]
+jsonpath "$.headers.X-Test-Header" == "hello-world"

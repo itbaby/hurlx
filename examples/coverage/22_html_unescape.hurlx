@@ -1,0 +1,6 @@
+GET https://httpbin.org/html
+HTTP 200
+[Captures]
+title: xpath "string(//title)"
+[Asserts]
+variable "title" htmlUnescape exists

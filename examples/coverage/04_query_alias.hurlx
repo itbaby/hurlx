@@ -1,0 +1,4 @@
+GET https://httpbin.org/get
+[QueryStringParams]
+key: value
+HTTP 200

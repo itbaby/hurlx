@@ -1,0 +1,6 @@
+GET https://httpbin.org/get
+HTTP 200
+[Asserts]
+header "X-Nonexistent" not exists
+status not == 500
+jsonpath "$.headers.X-Missing" not exists
