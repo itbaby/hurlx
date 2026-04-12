@@ -16,27 +16,210 @@ Fully compatible with all Hurl features, hurlx **uniquely supports import/export
 
 ### 🔄 Modular Import/Export
 
+**Core Feature**: Import and export capabilities for modular API testing
+
+**Example 1: Authentication Module**
 ```hurlx
-# Import common configuration
-import "common/auth.hurlx"
+# auth.hurlx
+POST https://api.example.com/login
+[JSON]
+{
+  "username": "{{username}}",
+  "password": "{{password}}"
+}
+HTTP 200
+[Captures]
+token: jsonpath "$.token"
+expires: jsonpath "$.expires_at"
 
-# Import shared API endpoints
-import "endpoints/users.hurlx"
+export token
+export expires
+```
 
-# Execute tests
+**Example 2: Reusing Authentication**
+```hurlx
+# api-test.hurlx
+import "auth.hurlx"
+
 GET https://api.example.com/users
+Authorization: Bearer {{token}}
 HTTP 200
 [Asserts]
 jsonpath "$.length()" > 0
+```
 
-# Export variables for use in other files
-export token
+**Example 3: Multi-file Workflow**
+```hurlx
+# config.hurlx
+# Common configuration
+export base_url = "https://api.example.com"
+export api_version = "v1"
+```
+
+```hurlx
+# endpoints.hurlx
+import "config.hurlx"
+
+export users_endpoint = "{{base_url}}/{{api_version}}/users"
+export products_endpoint = "{{base_url}}/{{api_version}}/products"
+```
+
+```hurlx
+# test.hurlx
+import "auth.hurlx"
+import "endpoints.hurlx"
+
+GET {{users_endpoint}}
+Authorization: Bearer {{token}}
+HTTP 200
 ```
 
 **Benefits**:
 - ✅ Reuse authentication, configuration, and endpoint definitions
-- ✅ Better team collaboration
+- ✅ Better team collaboration with shared modules
 - ✅ Modular test cases that are easy to maintain
+- ✅ Reduce duplication across test files
+- ✅ Centralize configuration management
+
+### 📊 Advanced Assertions
+
+**Core Feature**: Powerful assertion capabilities for comprehensive testing
+
+**Example 1: JSON Assertions**
+```hurlx
+GET https://api.example.com/user/1
+HTTP 200
+[Asserts]
+jsonpath "$.name" == "John Doe"
+jsonpath "$.age" > 18
+jsonpath "$.email" matches "^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$"
+jsonpath "$.address.city" exists
+```
+
+**Example 2: Response Time Assertion**
+```hurlx
+GET https://api.example.com/health
+HTTP 200
+[Asserts]
+duration < 500ms
+```
+
+**Example 3: Type Checking**
+```hurlx
+GET https://api.example.com/user/1
+HTTP 200
+[Asserts]
+jsonpath "$.id" isInteger
+jsonpath "$.active" isBoolean
+jsonpath "$.created_at" isIsoDate
+jsonpath "$.tags" isList
+jsonpath "$.profile" isObject
+```
+
+### 🔗 Variable Chaining
+
+**Core Feature**: Chain variables across requests for complex workflows
+
+**Example: Multi-step Authentication**
+```hurlx
+# Step 1: Get CSRF token
+GET https://api.example.com/login
+HTTP 200
+[Captures]
+csrf_token: xpath "//input[@name='csrf_token']/@value"
+
+# Step 2: Login with CSRF token
+POST https://api.example.com/login
+[Form]
+username: admin
+password: password
+csrf_token: {{csrf_token}}
+HTTP 302
+[Captures]
+session_id: cookie "session_id"
+
+# Step 3: Access protected resource
+GET https://api.example.com/dashboard
+Cookie: session_id={{session_id}}
+HTTP 200
+```
+
+### 🎯 Template System
+
+**Core Feature**: Dynamic value generation for tests
+
+**Example: Dynamic Values**
+```hurlx
+POST https://api.example.com/users
+[JSON]
+{
+  "id": "{{uuid}}",
+  "created_at": "{{date 'yyyy-MM-dd'T'HH:mm:ss.SSS'Z'}}",
+  "api_key": "{{randomHex 32}}",
+  "environment": "{{getenv 'ENVIRONMENT'}}",
+  "message": "Hello {{name}}"
+}
+HTTP 201
+```
+
+### 🔧 Engineering-Ready
+
+**Core Feature**: Tools for professional API engineering workflows
+
+**Example: Complete Test Suite**
+```hurlx
+# tests/setup.hurlx
+# Setup test environment
+export base_url = "https://api-staging.example.com"
+export test_user = "test@example.com"
+export test_pass = "Test123!"
+```
+
+```hurlx
+# tests/auth.hurlx
+import "setup.hurlx"
+
+POST {{base_url}}/auth/login
+[JSON]
+{
+  "email": "{{test_user}}",
+  "password": "{{test_pass}}"
+}
+HTTP 200
+[Captures]
+token: jsonpath "$.token"
+
+export token
+```
+
+```hurlx
+# tests/users.hurlx
+import "auth.hurlx"
+
+# Test user creation
+POST {{base_url}}/users
+Authorization: Bearer {{token}}
+[JSON]
+{
+  "name": "Test User",
+  "email": "newuser@example.com"
+}
+HTTP 201
+[Captures]
+user_id: jsonpath "$.id"
+
+# Test user retrieval
+GET {{base_url}}/users/{{user_id}}
+Authorization: Bearer {{token}}
+HTTP 200
+[Asserts]
+jsonpath "$.name" == "Test User"
+
+# Test user deletion
+DELETE {{base_url}}/users/{{user_id}}
+Authorization: Bearer {{token}}
+HTTP 204
+```
 
 ---
 
