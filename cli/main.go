@@ -15,7 +15,7 @@ import (
 )
 
 var (
-	version = "1.0.1"
+	version = "1.0.8"
 
 	flagVariable        arrayFlags
 	flagVariablesFile   string

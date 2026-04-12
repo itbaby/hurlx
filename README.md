@@ -1,7 +1,7 @@
 # hurlx
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.0.1-blue?style=flat-square" alt="Version">
+  <img src="https://img.shields.io/badge/version-1.0.8-blue?style=flat-square" alt="Version">
   <img src="https://img.shields.io/badge/Go-1.26+-00ADD8?style=flat-square&logo=go" alt="Go Version">
   <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="License">
 </p>
