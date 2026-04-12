@@ -71,12 +71,16 @@ jobs:
           pattern: '*'
           merge-multiple: true
 
+      - name: List artifacts
+        run: |
+          ls -la artifacts
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
           generate_release_notes: true
           files: |
-            artifacts/hurlx-*
+            artifacts/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
