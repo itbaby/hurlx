@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"html"
 	"regexp"
 	"strconv"
 	"strings"
@@ -224,10 +225,15 @@ func filterReplace(value interface{}, replaceStr string) (interface{}, error) {
 	return strings.ReplaceAll(str, parts[0], parts[1]), nil
 }
 
+const maxRegexPatternLen = 1024
+
 func filterRegex(value interface{}, pattern string) (interface{}, error) {
 	str, ok := value.(string)
 	if !ok {
 		return nil, fmt.Errorf("regex: expected string, got %T", value)
+	}
+	if len(pattern) > maxRegexPatternLen {
+		return nil, fmt.Errorf("regex: pattern exceeds maximum length of %d", maxRegexPatternLen)
 	}
 	re, err := regexp.Compile(pattern)
 	if err != nil {
@@ -248,6 +254,9 @@ func filterReplaceRegex(value interface{}, replaceStr string) (interface{}, erro
 	parts := strings.SplitN(replaceStr, " ", 2)
 	if len(parts) < 2 {
 		return nil, fmt.Errorf("replaceRegex: expected 'pattern replacement', got %q", replaceStr)
+	}
+	if len(parts[0]) > maxRegexPatternLen {
+		return nil, fmt.Errorf("replaceRegex: pattern exceeds maximum length of %d", maxRegexPatternLen)
 	}
 	re, err := regexp.Compile(parts[0])
 	if err != nil {
@@ -373,10 +382,7 @@ func filterHtmlEscape(value interface{}) (interface{}, error) {
 	if !ok {
 		return nil, fmt.Errorf("htmlEscape: expected string, got %T", value)
 	}
-	str = strings.ReplaceAll(str, "&", "&amp;")
-	str = strings.ReplaceAll(str, "<", "&lt;")
-	str = strings.ReplaceAll(str, ">", "&gt;")
-	return str, nil
+	return html.EscapeString(str), nil
 }
 
 func filterHtmlUnescape(value interface{}) (interface{}, error) {
@@ -384,12 +390,7 @@ func filterHtmlUnescape(value interface{}) (interface{}, error) {
 	if !ok {
 		return nil, fmt.Errorf("htmlUnescape: expected string, got %T", value)
 	}
-	str = strings.ReplaceAll(str, "&lt;", "<")
-	str = strings.ReplaceAll(str, "&gt;", ">")
-	str = strings.ReplaceAll(str, "&amp;", "&")
-	str = strings.ReplaceAll(str, "&quot;", "\"")
-	str = strings.ReplaceAll(str, "&#39;", "'")
-	return str, nil
+	return html.UnescapeString(str), nil
 }
 
 func filterUtf8Encode(value interface{}) (interface{}, error) {
@@ -647,10 +648,10 @@ func decodeBase64Raw(s string, urlSafe bool) ([]byte, error) {
 	case 3:
 		s += "="
 	}
-	return decodeHexImpl(s)
+	return decodeBase64RawImpl(s)
 }
 
-func decodeHexImpl(s string) ([]byte, error) {
+func decodeBase64RawImpl(s string) ([]byte, error) {
 	b := make([]byte, len(s))
 	n := 0
 	for i := 0; i < len(s); i++ {

@@ -1,6 +1,7 @@
 package tmpl
 
 import (
+	"crypto/rand"
 	"fmt"
 	"os"
 	"regexp"
@@ -80,24 +81,19 @@ func evaluateExpr(expr string, vars Variables) interface{} {
 }
 
 func generateUUID() string {
-	now := time.Now().UnixNano()
-	t := uint64(now)
-	uuid := make([]byte, 16)
-	for i := 0; i < 16; i++ {
-		uuid[i] = byte(t & 0xff)
-		t >>= 8
-		if t == 0 {
-			t = uint64(now >> (i + 1))
-		}
+	b := make([]byte, 16)
+	_, err := rand.Read(b)
+	if err != nil {
+		panic("failed to generate random bytes: " + err.Error())
 	}
-	uuid[6] = (uuid[6] & 0x0f) | 0x40
-	uuid[8] = (uuid[8] & 0x3f) | 0x80
+	b[6] = (b[6] & 0x0f) | 0x40 // version 4
+	b[8] = (b[8] & 0x3f) | 0x80 // variant 2 (RFC 4122)
 
 	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
-		uint32(uuid[0])<<24|uint32(uuid[1])<<16|uint32(uuid[2])<<8|uint32(uuid[3]),
-		uint16(uuid[4])<<8|uint16(uuid[5]),
-		uint16(uuid[6])<<8|uint16(uuid[7]),
-		uint16(uuid[8])<<8|uint16(uuid[9]),
-		uint64(uuid[10])<<40|uint64(uuid[11])<<32|uint64(uuid[12])<<24|uint64(uuid[13])<<16|uint64(uuid[14])<<8|uint64(uuid[15]),
+		uint32(b[0])<<24|uint32(b[1])<<16|uint32(b[2])<<8|uint32(b[3]),
+		uint16(b[4])<<8|uint16(b[5]),
+		uint16(b[6])<<8|uint16(b[7]),
+		uint16(b[8])<<8|uint16(b[9]),
+		uint64(b[10])<<40|uint64(b[11])<<32|uint64(b[12])<<24|uint64(b[13])<<16|uint64(b[14])<<8|uint64(b[15]),
 	)
 }

@@ -12,6 +12,8 @@ import (
 
 var lastTagRegex = regexp.MustCompile(`</\w+>`)
 
+var responseStatusRegex = regexp.MustCompile(`^HTTP(?:/([\d.]+))?\s+(\d+|\*)`)
+
 type Parser struct {
 	scanner  *bufio.Scanner
 	line     int
@@ -1072,8 +1074,7 @@ func parseValue(s string) ast.AssertValue {
 }
 
 func parseResponseStatus(line string) (string, int, error) {
-	re := regexp.MustCompile(`^HTTP(?:/([\d.]+))?\s+(\d+|\*)`)
-	matches := re.FindStringSubmatch(line)
+	matches := responseStatusRegex.FindStringSubmatch(line)
 	if matches == nil {
 		return "", 0, fmt.Errorf("invalid response status: %s", line)
 	}
@@ -1140,49 +1141,51 @@ func parseBoolPtr(s string) *bool {
 	return &b
 }
 
+var filterNameToTypeMap = map[string]ast.FilterType{
+	"count":               ast.FilterCount,
+	"regex":               ast.FilterRegex,
+	"replace":             ast.FilterReplace,
+	"replaceRegex":        ast.FilterReplaceRegex,
+	"split":               ast.FilterSplit,
+	"nth":                 ast.FilterNth,
+	"first":               ast.FilterFirst,
+	"last":                ast.FilterLast,
+	"toInt":               ast.FilterToInt,
+	"toFloat":             ast.FilterToFloat,
+	"toString":            ast.FilterToString,
+	"toDate":              ast.FilterToDate,
+	"dateFormat":          ast.FilterDateFormat,
+	"daysAfterNow":        ast.FilterDaysAfterNow,
+	"daysBeforeNow":       ast.FilterDaysBeforeNow,
+	"base64Decode":        ast.FilterBase64Decode,
+	"base64Encode":        ast.FilterBase64Encode,
+	"base64UrlSafeDecode": ast.FilterBase64UrlSafeDecode,
+	"base64UrlSafeEncode": ast.FilterBase64UrlSafeEncode,
+	"decode":              ast.FilterDecode,
+	"urlDecode":           ast.FilterUrlDecode,
+	"urlEncode":           ast.FilterUrlEncode,
+	"urlQueryParam":       ast.FilterUrlQueryParam,
+	"htmlEscape":          ast.FilterHtmlEscape,
+	"htmlUnescape":        ast.FilterHtmlUnescape,
+	"toHex":               ast.FilterToHex,
+	"utf8Decode":          ast.FilterUtf8Decode,
+	"utf8Encode":          ast.FilterUtf8Encode,
+	"xpath":               ast.FilterXPath,
+	"jsonpath":            ast.FilterJSONPath,
+	"location":            ast.FilterLocation,
+}
+
 func filterNameToType(name string) ast.FilterType {
-	m := map[string]ast.FilterType{
-		"count":               ast.FilterCount,
-		"regex":               ast.FilterRegex,
-		"replace":             ast.FilterReplace,
-		"replaceRegex":        ast.FilterReplaceRegex,
-		"split":               ast.FilterSplit,
-		"nth":                 ast.FilterNth,
-		"first":               ast.FilterFirst,
-		"last":                ast.FilterLast,
-		"toInt":               ast.FilterToInt,
-		"toFloat":             ast.FilterToFloat,
-		"toString":            ast.FilterToString,
-		"toDate":              ast.FilterToDate,
-		"dateFormat":          ast.FilterDateFormat,
-		"daysAfterNow":        ast.FilterDaysAfterNow,
-		"daysBeforeNow":       ast.FilterDaysBeforeNow,
-		"base64Decode":        ast.FilterBase64Decode,
-		"base64Encode":        ast.FilterBase64Encode,
-		"base64UrlSafeDecode": ast.FilterBase64UrlSafeDecode,
-		"base64UrlSafeEncode": ast.FilterBase64UrlSafeEncode,
-		"decode":              ast.FilterDecode,
-		"urlDecode":           ast.FilterUrlDecode,
-		"urlEncode":           ast.FilterUrlEncode,
-		"urlQueryParam":       ast.FilterUrlQueryParam,
-		"htmlEscape":          ast.FilterHtmlEscape,
-		"htmlUnescape":        ast.FilterHtmlUnescape,
-		"toHex":               ast.FilterToHex,
-		"utf8Decode":          ast.FilterUtf8Decode,
-		"utf8Encode":          ast.FilterUtf8Encode,
-		"xpath":               ast.FilterXPath,
-		"jsonpath":            ast.FilterJSONPath,
-		"location":            ast.FilterLocation,
-	}
-	if ft, ok := m[name]; ok {
+	if ft, ok := filterNameToTypeMap[name]; ok {
 		return ft
 	}
 	return ast.FilterCount
 }
 
+var httpMethods = []string{"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "TRACE", "CONNECT", "QUERY"}
+
 func isMethod(line string) bool {
-	methods := []string{"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "TRACE", "CONNECT", "QUERY"}
-	for _, m := range methods {
+	for _, m := range httpMethods {
 		if strings.HasPrefix(line, m+" ") || line == m {
 			return true
 		}

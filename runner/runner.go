@@ -18,6 +18,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"net"
 	"regexp"
 	"strconv"
 	"strings"
@@ -331,6 +332,9 @@ func (r *Runner) buildRequest(reqDef *ast.Request) (*http.Request, error) {
 	if err != nil {
 		return nil, fmt.Errorf("invalid URL %q: %w", rawURL, err)
 	}
+	if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
+		return nil, fmt.Errorf("URL scheme must be http or https, got %q", parsedURL.Scheme)
+	}
 
 	if len(reqDef.Query) > 0 {
 		q := parsedURL.Query()
@@ -625,6 +629,9 @@ func (r *Runner) evaluateQuery(query ast.Query, resp *http.Response, body []byte
 			strings.HasPrefix(string(body), "<HTML")
 		return filter.ExtractXPath(body, query.Value, isHTML)
 	case ast.QueryRegex:
+		if len(query.Value) > maxRegexPatternLen {
+			return nil, fmt.Errorf("regex: pattern exceeds maximum length of %d", maxRegexPatternLen)
+		}
 		re, err := regexp.Compile(query.Value)
 		if err != nil {
 			return nil, fmt.Errorf("regex: invalid pattern %q: %w", query.Value, err)
@@ -1111,7 +1118,12 @@ func checkMatches(value interface{}, expected ast.AssertValue, not bool) error {
 	return nil
 }
 
+const maxRegexPatternLen = 1024
+
 func regexpMatch(pattern string, s string) (bool, error) {
+	if len(pattern) > maxRegexPatternLen {
+		return false, fmt.Errorf("regex: pattern exceeds maximum length of %d", maxRegexPatternLen)
+	}
 	re, err := regexp.Compile(pattern)
 	if err != nil {
 		return false, err
@@ -1196,7 +1208,14 @@ func isIPv6(v interface{}) bool {
 	if !ok {
 		return false
 	}
-	return strings.Contains(s, ":")
+	if strings.HasPrefix(s, "[") && strings.HasSuffix(s, "]") {
+		s = s[1 : len(s)-1]
+	}
+	ip := net.ParseIP(s)
+	if ip == nil {
+		return false
+	}
+	return ip.To4() == nil
 }
 
 func isISODate(v interface{}) bool {
@@ -1208,12 +1227,14 @@ func isISODate(v interface{}) bool {
 	return err == nil
 }
 
+var uuidRegex = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+
 func isUUID(v interface{}) bool {
 	s, ok := v.(string)
 	if !ok {
 		return false
 	}
-	return len(s) == 36 && s[8] == '-' && s[13] == '-' && s[18] == '-' && s[23] == '-'
+	return uuidRegex.MatchString(s)
 }
 
 func isCollection(v interface{}) bool {

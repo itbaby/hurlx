@@ -100,6 +100,13 @@ func (r *Resolver) buildResolved(file *ast.File, filePath string) (*ResolvedFile
 			}
 			importPath = filepath.Join(dir, importPath)
 		}
+		importPath = filepath.Clean(importPath)
+		if r.fileRoot != "" {
+			cleanRoot := filepath.Clean(r.fileRoot)
+			if !strings.HasPrefix(importPath, cleanRoot+string(os.PathSeparator)) && importPath != cleanRoot {
+				return nil, fmt.Errorf("import path %q escapes file root %q", imp.Path, r.fileRoot)
+			}
+		}
 
 		if !strings.HasSuffix(importPath, ".hurlx") && !strings.HasSuffix(importPath, ".hurl") {
 			importPath += ".hurlx"
