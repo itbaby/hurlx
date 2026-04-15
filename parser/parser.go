@@ -374,6 +374,7 @@ func (p *Parser) parseBasicAuth() *ast.BasicAuth {
 func (p *Parser) parseOptionsSection() *ast.OptionsSection {
 	opts := &ast.OptionsSection{
 		Variables: make(map[string]string),
+		Headers:   make(map[string]string),
 	}
 	for p.nextLine() {
 		line := p.currentLine()
@@ -449,6 +450,9 @@ func (p *Parser) parseOptionsSection() *ast.OptionsSection {
 			opts.PathAsIs = parseBoolPtr(val)
 		case "unix-socket", "unix_socket":
 			opts.UnixSocket = val
+		default:
+			// Treat as arbitrary header
+			opts.Headers[key] = val
 		}
 	}
 	return opts
@@ -856,6 +860,7 @@ func (p *Parser) parseQueryAndFilters(input string) (ast.Query, []ast.Filter, st
 		"location",
 		"count", "regex", "split", "first", "last",
 		"decode", "replace", "nth",
+		"upper", "lower",
 	}
 
 	noArgFilters := map[string]bool{
@@ -867,6 +872,7 @@ func (p *Parser) parseQueryAndFilters(input string) (ast.Query, []ast.Filter, st
 		"toHex": true, "htmlEscape": true, "htmlUnescape": true,
 		"utf8Decode": true, "utf8Encode": true,
 		"location": true, "daysAfterNow": true, "daysBeforeNow": true,
+		"upper": true, "lower": true,
 	}
 
 	for {
@@ -1107,11 +1113,42 @@ func extractQuotedString(input string) (string, string) {
 			continue
 		}
 		if input[i] == '"' && !escaped {
-			return input[1:i], input[i+1:]
+			return unescapeString(input[1:i]), input[i+1:]
 		}
 		escaped = false
 	}
-	return input[1:], ""
+	return unescapeString(input[1:]), ""
+}
+
+func unescapeString(s string) string {
+	var result strings.Builder
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\\' && i+1 < len(s) {
+			switch s[i+1] {
+			case '\\':
+				result.WriteByte('\\')
+				i++
+			case '"':
+				result.WriteByte('"')
+				i++
+			case 'n':
+				result.WriteByte('\n')
+				i++
+			case 't':
+				result.WriteByte('\t')
+				i++
+			case 'r':
+				result.WriteByte('\r')
+				i++
+			default:
+				// For regex patterns like \w, \d, etc., keep the backslash
+				result.WriteByte('\\')
+			}
+		} else {
+			result.WriteByte(s[i])
+		}
+	}
+	return result.String()
 }
 
 func extractRegexPattern(input string) (string, string) {
@@ -1173,6 +1210,8 @@ var filterNameToTypeMap = map[string]ast.FilterType{
 	"xpath":               ast.FilterXPath,
 	"jsonpath":            ast.FilterJSONPath,
 	"location":            ast.FilterLocation,
+	"upper":               ast.FilterUpper,
+	"lower":               ast.FilterLower,
 }
 
 func filterNameToType(name string) ast.FilterType {

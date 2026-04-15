@@ -370,7 +370,7 @@ func TestHurlGrammar_AllQueryTypes(t *testing.T) {
 		{"bytes", `bytes count == 100`, ast.QueryBytes, ""},
 		{"xpath", `xpath "//h1" exists`, ast.QueryXPath, "//h1"},
 		{"jsonpath", `jsonpath "$.name" == "test"`, ast.QueryJSONPath, "$.name"},
-		{"regex", `regex "^(\\d+)$" == "123"`, ast.QueryRegex, "^(\\\\d+)$"},
+		{"regex", `regex "^(\\d+)$" == "123"`, ast.QueryRegex, "^(\\d+)$"},
 		{"variable", `variable "x" == "y"`, ast.QueryVariable, "x"},
 		{"duration", "duration < 1000", ast.QueryDuration, ""},
 		{"sha256", `sha256 == hex,abcdef;`, ast.QuerySHA256, ""},

@@ -92,6 +92,10 @@ func applyFilter(value interface{}, f ast.Filter) (interface{}, error) {
 		return filterBase64UrlSafeDecode(value)
 	case ast.FilterBase64UrlSafeEncode:
 		return filterBase64UrlSafeEncode(value)
+	case ast.FilterUpper:
+		return filterUpper(value)
+	case ast.FilterLower:
+		return filterLower(value)
 	default:
 		return value, fmt.Errorf("unsupported filter type: %d", f.Type)
 	}
@@ -832,6 +836,10 @@ func walkJSON(v interface{}, path string) interface{} {
 		if !ok {
 			return nil
 		}
+		// Handle negative indexes (Python-style)
+		if idx < 0 {
+			idx = len(arr) + idx
+		}
 		if idx < 0 || idx >= len(arr) {
 			return nil
 		}
@@ -959,4 +967,20 @@ func ExtractXPath(data []byte, expr string, isHTML bool) (interface{}, error) {
 		return nil, fmt.Errorf("xpath: no match for %q", expr)
 	}
 	return node.InnerText(), nil
+}
+
+func filterUpper(value interface{}) (interface{}, error) {
+	str, ok := value.(string)
+	if !ok {
+		return nil, fmt.Errorf("upper: expected string, got %T", value)
+	}
+	return strings.ToUpper(str), nil
+}
+
+func filterLower(value interface{}) (interface{}, error) {
+	str, ok := value.(string)
+	if !ok {
+		return nil, fmt.Errorf("lower: expected string, got %T", value)
+	}
+	return strings.ToLower(str), nil
 }

@@ -328,6 +328,27 @@ func (r *Runner) buildRequest(reqDef *ast.Request) (*http.Request, error) {
 
 	rawURL := tmpl.Render(reqDef.URL, r.variables)
 
+	// Normalize URL by escaping spaces
+	if strings.Contains(rawURL, " ") {
+		// Find the scheme and authority, then encode the path and query
+		if idx := strings.Index(rawURL, "://"); idx >= 0 {
+			scheme := rawURL[:idx+3]
+			rest := rawURL[idx+3:]
+			if slashIdx := strings.Index(rest, "/"); slashIdx >= 0 {
+				authority := rest[:slashIdx]
+				pathAndQuery := rest[slashIdx:]
+				// Replace spaces with %20 in path and query
+				pathAndQuery = strings.ReplaceAll(pathAndQuery, " ", "%20")
+				rawURL = scheme + authority + pathAndQuery
+			} else if qIdx := strings.Index(rest, "?"); qIdx >= 0 {
+				authority := rest[:qIdx]
+				query := rest[qIdx:]
+				query = strings.ReplaceAll(query, " ", "%20")
+				rawURL = scheme + authority + query
+			}
+		}
+	}
+
 	parsedURL, err := url.Parse(rawURL)
 	if err != nil {
 		return nil, fmt.Errorf("invalid URL %q: %w", rawURL, err)
@@ -520,6 +541,10 @@ func (r *Runner) applyRequestOptions(req *http.Request, opts *ast.OptionsSection
 
 	for k, v := range opts.Variables {
 		r.variables.Set(k, tmpl.Render(v, r.variables))
+	}
+	
+	for k, v := range opts.Headers {
+		req.Header.Set(k, tmpl.Render(v, r.variables))
 	}
 }
 
@@ -1223,8 +1248,26 @@ func isISODate(v interface{}) bool {
 	if !ok {
 		return false
 	}
-	_, err := time.Parse(time.RFC3339, s)
-	return err == nil
+	
+	// Try multiple ISO 8601 and common HTTP date formats
+	formats := []string{
+		time.RFC3339,         // 2006-01-02T15:04:05Z07:00
+		time.RFC3339Nano,     // 2006-01-02T15:04:05.999999999Z07:00
+		"2006-01-02",         // Basic ISO 8601 date
+		"2006-01-02T15:04:05", // ISO 8601 without timezone
+		time.RFC1123,         // Mon, 02 Jan 2006 15:04:05 MST (HTTP date format)
+		time.RFC1123Z,        // Mon, 02 Jan 2006 15:04:05 -0700
+		time.RFC822,          // 02 Jan 06 15:04 MST
+		time.RFC822Z,         // 02 Jan 06 15:04 -0700
+		"2006-01-02 15:04:05",  // Common format
+	}
+	
+	for _, format := range formats {
+		if _, err := time.Parse(format, s); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 var uuidRegex = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)

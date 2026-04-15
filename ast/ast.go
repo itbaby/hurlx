@@ -103,6 +103,7 @@ type OptionsSection struct {
 	Skip           *bool
 	Output         string
 	Variables      map[string]string
+	Headers        map[string]string
 	Proxy          string
 	User           string
 	UserAgent      string
@@ -230,6 +231,8 @@ const (
 	FilterXPath
 	FilterJSONPath
 	FilterLocation
+	FilterUpper
+	FilterLower
 )
 
 type AssertValue struct {
