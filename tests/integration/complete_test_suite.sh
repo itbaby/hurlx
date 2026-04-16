@@ -156,7 +156,7 @@ GET https://httpbin.org/headers
 user-agent: TestAgent
 HTTP 200
 [Asserts]
-header "User-Agent" == "TestAgent"
+jsonpath "$.headers.User-Agent" == "TestAgent"
 EOF
 run_test "[Options] section" "$OUTPUT_DIR/12_options.hurl"
 
@@ -708,7 +708,7 @@ cat > "$OUTPUT_DIR/68_filter_xpath.hurl" << 'EOF'
 GET https://example.com
 HTTP *
 [Asserts]
-xpath "string(//title)" isString
+xpath "//title/text()" isString
 EOF
 run_test "xpath filter (example.com)" "$OUTPUT_DIR/68_filter_xpath.hurl"
 
@@ -790,7 +790,7 @@ cat > "$OUTPUT_DIR/75_template_getenv.hurl" << 'EOF'
 GET https://httpbin.org/headers
 HTTP 200
 [Asserts]
-header "Host" exists
+jsonpath "$.headers.Host" exists
 EOF
 run_test "getEnv template" "$OUTPUT_DIR/75_template_getenv.hurl"
 
