@@ -109,6 +109,20 @@ func NewRunner(opts RunOptions) *Runner {
 		TLSHandshakeTimeout: 10 * time.Second,
 	}
 
+	if opts.ConnectTimeout > 0 {
+		transport.DialContext = (&net.Dialer{
+			Timeout:   opts.ConnectTimeout,
+			KeepAlive: 30 * time.Second,
+		}).DialContext
+	}
+
+	if opts.Proxy != "" {
+		proxyURL, err := url.Parse(opts.Proxy)
+		if err == nil {
+			transport.Proxy = http.ProxyURL(proxyURL)
+		}
+	}
+
 	fileRoot := opts.FileRoot
 
 	r := &Runner{
@@ -389,9 +403,10 @@ func (r *Runner) buildRequest(reqDef *ast.Request) (*http.Request, error) {
 				if err != nil {
 					return nil, fmt.Errorf("cannot open file %s: %w", filePath, err)
 				}
-				defer f.Close()
-				if _, err := io.Copy(fw, f); err != nil {
-					return nil, err
+				_, copyErr := io.Copy(fw, f)
+				f.Close()
+				if copyErr != nil {
+					return nil, copyErr
 				}
 			} else {
 				fw, err := writer.CreateFormField(field.Name)
@@ -479,7 +494,7 @@ func (r *Runner) buildRequest(reqDef *ast.Request) (*http.Request, error) {
 	}
 
 	if r.options.Compressed {
-		req.Header.Set("Accept-Encoding", "gzip, deflate, br")
+		req.Header.Set("Accept-Encoding", "gzip, deflate")
 	}
 
 	r.applyRequestOptions(req, reqDef.Options)
@@ -866,22 +881,25 @@ func (r *Runner) checkAssert(index int, assert ast.Assert, value interface{}, ex
 }
 
 func readBody(resp *http.Response) ([]byte, error) {
-	var reader io.ReadCloser = resp.Body
+	defer resp.Body.Close()
+	var reader io.Reader = resp.Body
 	switch resp.Header.Get("Content-Encoding") {
 	case "gzip":
 		var err error
-		reader, err = gzip.NewReader(resp.Body)
+		gr, err := gzip.NewReader(resp.Body)
 		if err != nil {
 			return nil, err
 		}
-		defer reader.Close()
+		defer gr.Close()
+		reader = gr
 	case "deflate":
 		var err error
-		reader, err = zlib.NewReader(resp.Body)
+		zr, err := zlib.NewReader(resp.Body)
 		if err != nil {
 			return nil, err
 		}
-		defer reader.Close()
+		defer zr.Close()
+		reader = zr
 	}
 	return io.ReadAll(reader)
 }

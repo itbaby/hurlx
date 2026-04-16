@@ -2,6 +2,7 @@ package tmpl
 
 import (
 	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"regexp"
@@ -46,12 +47,34 @@ func evaluateExpr(expr string, vars Variables) interface{} {
 	expr = strings.TrimSpace(expr)
 
 	switch {
-	case expr == "newUuid":
+	case expr == "newUuid" || expr == "uuid":
 		return generateUUID()
 	case expr == "newDate":
 		return time.Now().UTC().Format(time.RFC3339Nano)
+	case strings.HasPrefix(expr, "date"):
+		arg := strings.TrimSpace(strings.TrimPrefix(expr, "date"))
+		arg = strings.Trim(arg, " \"'")
+		if arg == "" {
+			return time.Now().UTC().Format(time.RFC3339Nano)
+		}
+		goFormat := hurlFormatToGo(arg)
+		return time.Now().UTC().Format(goFormat)
+	case strings.HasPrefix(expr, "randomHex"):
+		arg := strings.TrimSpace(strings.TrimPrefix(expr, "randomHex"))
+		arg = strings.Trim(arg, " \"'")
+		n := 32
+		if arg != "" {
+			if parsed, err := fmt.Sscanf(arg, "%d", &n); err != nil || parsed == 0 {
+				n = 32
+			}
+		}
+		return generateRandomHex(n)
 	case strings.HasPrefix(expr, "getEnv"):
 		arg := strings.TrimSpace(strings.TrimPrefix(expr, "getEnv"))
+		arg = strings.Trim(arg, " \"'")
+		return os.Getenv(arg)
+	case strings.HasPrefix(expr, "getenv"):
+		arg := strings.TrimSpace(strings.TrimPrefix(expr, "getenv"))
 		arg = strings.Trim(arg, " \"'")
 		return os.Getenv(arg)
 	}
@@ -96,4 +119,62 @@ func generateUUID() string {
 		uint16(b[8])<<8|uint16(b[9]),
 		uint64(b[10])<<40|uint64(b[11])<<32|uint64(b[12])<<24|uint64(b[13])<<16|uint64(b[14])<<8|uint64(b[15]),
 	)
+}
+
+func generateRandomHex(n int) string {
+	b := make([]byte, n)
+	_, err := rand.Read(b)
+	if err != nil {
+		panic("failed to generate random bytes: " + err.Error())
+	}
+	return hex.EncodeToString(b)
+}
+
+// hurlFormatToGo converts Java-style date format patterns (as used in Hurl/README)
+// to Go time layout strings. Also supports strftime-style % patterns.
+func hurlFormatToGo(format string) string {
+	// Java-style replacements (as shown in README examples)
+	javaReplacements := []struct {
+		java string
+		goFmt string
+	}{
+		{"yyyy", "2006"},
+		{"yy", "06"},
+		{"MMMM", "January"},
+		{"MMM", "Jan"},
+		{"MM", "01"},
+		{"dd", "02"},
+		{"HH", "15"},
+		{"mm", "04"},
+		{"ss", "05"},
+		{"SSS", "000"},
+		{"ZZZZ", "-07:00"},
+		{"ZZZ", "-0700"},
+		{"Z", "Z07:00"},
+	}
+
+	result := format
+	for _, r := range javaReplacements {
+		result = strings.ReplaceAll(result, r.java, r.goFmt)
+	}
+
+	// Also support strftime-style for compatibility
+	strftimeReplacements := []struct {
+		strftime string
+		goFmt    string
+	}{
+		{"%Y", "2006"},
+		{"%m", "01"},
+		{"%d", "02"},
+		{"%H", "15"},
+		{"%M", "04"},
+		{"%S", "05"},
+		{"%z", "-0700"},
+		{"%Z", "MST"},
+	}
+	for _, r := range strftimeReplacements {
+		result = strings.ReplaceAll(result, r.strftime, r.goFmt)
+	}
+
+	return result
 }

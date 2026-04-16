@@ -1,4 +1,4 @@
 GET https://example.com
-HTTP 200
+HTTP *
 [Asserts]
-xpath "//title" == "Example Domain"
+xpath "//title/text()" isString

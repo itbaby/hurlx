@@ -1,5 +1,5 @@
 POST https://httpbin.org/post
 [Multipart]
 name: test
-file: file,./test.txt;
+file: file,./README.md;
 HTTP 200

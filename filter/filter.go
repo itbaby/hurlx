@@ -1,6 +1,7 @@
 package filter
 
 import (
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -458,10 +459,7 @@ func DecodeBase64(s string) ([]byte, error) {
 func decodeBase64(s string) ([]byte, error) {
 	s = strings.ReplaceAll(s, "\n", "")
 	s = strings.ReplaceAll(s, " ", "")
-	s = strings.TrimRight(s, "=")
-	var data []byte
-	var err error
-	data, err = decodeBase64Impl(s)
+	data, err := base64.StdEncoding.WithPadding(base64.NoPadding).DecodeString(s)
 	if err != nil {
 		return nil, fmt.Errorf("base64Decode: %w", err)
 	}
@@ -469,15 +467,13 @@ func decodeBase64(s string) ([]byte, error) {
 }
 
 func encodeBase64(data []byte) string {
-	return encodeBase64Impl(data)
+	return base64.StdEncoding.EncodeToString(data)
 }
 
 func decodeBase64URLSafe(s string) ([]byte, error) {
 	s = strings.ReplaceAll(s, "\n", "")
 	s = strings.ReplaceAll(s, " ", "")
-	var data []byte
-	var err error
-	data, err = decodeBase64URLSafeImpl(s)
+	data, err := base64.URLEncoding.WithPadding(base64.NoPadding).DecodeString(s)
 	if err != nil {
 		return nil, fmt.Errorf("base64UrlSafeDecode: %w", err)
 	}
@@ -485,7 +481,7 @@ func decodeBase64URLSafe(s string) ([]byte, error) {
 }
 
 func encodeBase64URLSafe(data []byte) string {
-	return encodeBase64URLSafeImpl(data)
+	return base64.URLEncoding.WithPadding(base64.NoPadding).EncodeToString(data)
 }
 
 func parseDate(s string, format string) (time.Time, error) {
@@ -609,14 +605,6 @@ func getURLQueryParam(urlStr string, param string) (string, error) {
 	return "", fmt.Errorf("query param %q not found", param)
 }
 
-func decodeBase64Impl(s string) ([]byte, error) {
-	return decodeBase64Raw(s, false)
-}
-
-func decodeBase64URLSafeImpl(s string) ([]byte, error) {
-	return decodeBase64Raw(s, true)
-}
-
 func filterDecode(value interface{}, encoding string) (interface{}, error) {
 	var data []byte
 	switch v := value.(type) {
@@ -639,106 +627,6 @@ func filterDecode(value interface{}, encoding string) (interface{}, error) {
 		return nil, fmt.Errorf("decode: %w", err)
 	}
 	return string(decoded), nil
-}
-
-func decodeBase64Raw(s string, urlSafe bool) ([]byte, error) {
-	if urlSafe {
-		s = strings.ReplaceAll(s, "-", "+")
-		s = strings.ReplaceAll(s, "_", "/")
-	}
-	switch len(s) % 4 {
-	case 2:
-		s += "=="
-	case 3:
-		s += "="
-	}
-	return decodeBase64RawImpl(s)
-}
-
-func decodeBase64RawImpl(s string) ([]byte, error) {
-	b := make([]byte, len(s))
-	n := 0
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		var val byte
-		switch {
-		case c >= 'A' && c <= 'Z':
-			val = c - 'A'
-		case c >= 'a' && c <= 'z':
-			val = c - 'a' + 26
-		case c >= '0' && c <= '9':
-			val = c - '0' + 52
-		case c == '+':
-			val = 62
-		case c == '/':
-			val = 63
-		case c == '=':
-			continue
-		default:
-			continue
-		}
-		b[n] = val
-		n++
-	}
-	result := make([]byte, 0, n*3/4)
-	acc := uint32(0)
-	bits := 0
-	for i := 0; i < n; i++ {
-		acc = (acc << 6) | uint32(b[i])
-		bits += 6
-		if bits >= 8 {
-			bits -= 8
-			result = append(result, byte(acc>>bits))
-			acc &= (1 << bits) - 1
-		}
-	}
-	return result, nil
-}
-
-func encodeBase64Impl(data []byte) string {
-	return encodeToString(data, false)
-}
-
-func encodeBase64URLSafeImpl(data []byte) string {
-	return encodeToString(data, true)
-}
-
-func encodeToString(data []byte, urlSafe bool) string {
-	const base64Chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
-	const base64UrlChars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
-	chars := base64Chars
-	if urlSafe {
-		chars = base64UrlChars
-	}
-
-	var result strings.Builder
-	for i := 0; i < len(data); i += 3 {
-		b0 := data[i]
-		b1 := byte(0)
-		b2 := byte(0)
-		if i+1 < len(data) {
-			b1 = data[i+1]
-		}
-		if i+2 < len(data) {
-			b2 = data[i+2]
-		}
-
-		result.WriteByte(chars[b0>>2])
-		result.WriteByte(chars[((b0&0x03)<<4)|(b1>>4)])
-
-		if i+1 < len(data) {
-			result.WriteByte(chars[((b1&0x0f)<<2)|(b2>>6)])
-		} else if !urlSafe {
-			result.WriteByte('=')
-		}
-
-		if i+2 < len(data) {
-			result.WriteByte(chars[b2&0x3f])
-		} else if !urlSafe {
-			result.WriteByte('=')
-		}
-	}
-	return result.String()
 }
 
 func ExtractJSONPath(data []byte, path string) (interface{}, error) {
