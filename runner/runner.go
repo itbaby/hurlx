@@ -266,13 +266,21 @@ func (r *Runner) executeEntry(index int, entry ast.Entry, isRetry bool) (*EntryR
 		Captures:   make(map[string]interface{}),
 	}
 
+	// Clone variables for this entry to avoid polluting shared state
+	entryVars := r.variables.Clone()
+
 	if entry.Request.Options != nil && len(entry.Request.Options.Variables) > 0 {
 		for k, v := range entry.Request.Options.Variables {
-			r.variables.Set(k, tmpl.Render(v, r.variables))
+			rendered, err := tmpl.Render(v, entryVars)
+			if err == nil {
+				entryVars.Set(k, rendered)
+			} else {
+				r.variables.Set(k, v)
+			}
 		}
 	}
 
-	req, err := r.buildRequest(entry.Request)
+	req, err := r.buildRequest(entry.Request, entryVars)
 	if err != nil {
 		return result, fmt.Errorf("entry %d: build request failed: %w", index, err)
 	}
@@ -320,7 +328,7 @@ func (r *Runner) executeEntry(index int, entry ast.Entry, isRetry bool) (*EntryR
 	}
 
 	if entry.Response != nil {
-		if err := r.processResponse(index, entry.Response, result); err != nil {
+		if err := r.processResponse(index, entry.Response, result, entryVars); err != nil {
 			result.Error = err
 			return result, err
 		}
@@ -329,18 +337,21 @@ func (r *Runner) executeEntry(index int, entry ast.Entry, isRetry bool) (*EntryR
 	return result, nil
 }
 
-func (r *Runner) buildRequest(reqDef *ast.Request) (*http.Request, error) {
+func (r *Runner) buildRequest(reqDef *ast.Request, vars tmpl.Variables) (*http.Request, error) {
 	method := reqDef.Method
 
 	if r.options.Verbose {
 		keys := make([]string, 0)
-		for k := range r.variables {
+		for k := range vars {
 			keys = append(keys, k)
 		}
 		r.logger.Printf("* Variables available: %v\n", keys)
 	}
 
-	rawURL := tmpl.Render(reqDef.URL, r.variables)
+	rawURL, err := tmpl.Render(reqDef.URL, vars)
+	if err != nil {
+		return nil, fmt.Errorf("render URL: %w", err)
+	}
 
 	// Normalize URL by escaping spaces
 	if strings.Contains(rawURL, " ") {
@@ -374,7 +385,12 @@ func (r *Runner) buildRequest(reqDef *ast.Request) (*http.Request, error) {
 	if len(reqDef.Query) > 0 {
 		q := parsedURL.Query()
 		for _, kv := range reqDef.Query {
-			q.Set(kv.Key, tmpl.Render(kv.Value, r.variables))
+			rendered, err := tmpl.Render(kv.Value, vars)
+			if err != nil {
+				q.Set(kv.Key, kv.Value)
+			} else {
+				q.Set(kv.Key, rendered)
+			}
 		}
 		parsedURL.RawQuery = q.Encode()
 	}
@@ -384,7 +400,12 @@ func (r *Runner) buildRequest(reqDef *ast.Request) (*http.Request, error) {
 	if reqDef.Form != nil && len(reqDef.Form) > 0 {
 		data := url.Values{}
 		for _, kv := range reqDef.Form {
-			data.Set(kv.Key, tmpl.Render(kv.Value, r.variables))
+			rendered, err := tmpl.Render(kv.Value, vars)
+			if err != nil {
+				data.Set(kv.Key, kv.Value)
+			} else {
+				data.Set(kv.Key, rendered)
+			}
 		}
 		encoded := data.Encode()
 		bodyBytes = []byte(encoded)
@@ -395,6 +416,9 @@ func (r *Runner) buildRequest(reqDef *ast.Request) (*http.Request, error) {
 		for _, field := range reqDef.Multipart {
 			if field.IsFile {
 				filePath := resolveFilePath(r.fileRoot, field.Value)
+				if filePath == "" {
+					return nil, fmt.Errorf("invalid file path %q: path escapes file root", field.Value)
+				}
 				fw, err := writer.CreateFormFile(field.Name, filepath.Base(filePath))
 				if err != nil {
 					return nil, err
@@ -413,9 +437,17 @@ func (r *Runner) buildRequest(reqDef *ast.Request) (*http.Request, error) {
 				if err != nil {
 					return nil, err
 				}
-				_, err = fw.Write([]byte(tmpl.Render(field.Value, r.variables)))
+				rendered, err := tmpl.Render(field.Value, vars)
 				if err != nil {
-					return nil, err
+					_, err = fw.Write([]byte(field.Value))
+					if err != nil {
+						return nil, err
+					}
+				} else {
+					_, err = fw.Write([]byte(rendered))
+					if err != nil {
+						return nil, err
+					}
 				}
 			}
 		}
@@ -423,7 +455,7 @@ func (r *Runner) buildRequest(reqDef *ast.Request) (*http.Request, error) {
 		bodyBytes = buf.Bytes()
 		contentType = writer.FormDataContentType()
 	} else if reqDef.Body != nil {
-		bodyBytes = r.buildBody(reqDef.Body)
+		bodyBytes = r.buildBody(reqDef.Body, vars)
 
 		switch reqDef.Body.Type {
 		case ast.BodyJSON:
@@ -436,6 +468,9 @@ func (r *Runner) buildRequest(reqDef *ast.Request) (*http.Request, error) {
 			}
 		case ast.BodyFile:
 			filePath := resolveFilePath(r.fileRoot, reqDef.Body.Content)
+			if filePath == "" {
+				return nil, fmt.Errorf("invalid body file path %q: path escapes file root", reqDef.Body.Content)
+			}
 			data, err := os.ReadFile(filePath)
 			if err != nil {
 				return nil, fmt.Errorf("cannot read body file %s: %w", filePath, err)
@@ -456,8 +491,12 @@ func (r *Runner) buildRequest(reqDef *ast.Request) (*http.Request, error) {
 	req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 
 	for _, h := range reqDef.Headers {
-		value := tmpl.Render(h.Value, r.variables)
-		req.Header.Set(h.Name, value)
+		rendered, err := tmpl.Render(h.Value, vars)
+		if err != nil {
+			req.Header.Set(h.Name, h.Value)
+		} else {
+			req.Header.Set(h.Name, rendered)
+		}
 	}
 
 	if contentType != "" && req.Header.Get("Content-Type") == "" {
@@ -466,18 +505,31 @@ func (r *Runner) buildRequest(reqDef *ast.Request) (*http.Request, error) {
 
 	if reqDef.Cookies != nil {
 		for _, c := range reqDef.Cookies {
-			req.AddCookie(&http.Cookie{
-				Name:  c.Key,
-				Value: tmpl.Render(c.Value, r.variables),
-			})
+			rendered, err := tmpl.Render(c.Value, vars)
+			if err != nil {
+				req.AddCookie(&http.Cookie{
+					Name:  c.Key,
+					Value: c.Value,
+				})
+			} else {
+				req.AddCookie(&http.Cookie{
+					Name:  c.Key,
+					Value: rendered,
+				})
+			}
 		}
 	}
 
 	if reqDef.BasicAuth != nil {
-		req.SetBasicAuth(
-			tmpl.Render(reqDef.BasicAuth.Username, r.variables),
-			tmpl.Render(reqDef.BasicAuth.Password, r.variables),
-		)
+		username, errU := tmpl.Render(reqDef.BasicAuth.Username, vars)
+		password, errP := tmpl.Render(reqDef.BasicAuth.Password, vars)
+		if errU != nil {
+			username = reqDef.BasicAuth.Username
+		}
+		if errP != nil {
+			password = reqDef.BasicAuth.Password
+		}
+		req.SetBasicAuth(username, password)
 	}
 
 	if r.options.User != "" {
@@ -497,15 +549,18 @@ func (r *Runner) buildRequest(reqDef *ast.Request) (*http.Request, error) {
 		req.Header.Set("Accept-Encoding", "gzip, deflate")
 	}
 
-	r.applyRequestOptions(req, reqDef.Options)
+	r.applyRequestOptions(req, reqDef.Options, vars)
 
 	return req, nil
 }
 
-func (r *Runner) buildBody(body *ast.Body) []byte {
+func (r *Runner) buildBody(body *ast.Body, vars tmpl.Variables) []byte {
 	switch body.Type {
 	case ast.BodyJSON, ast.BodyXML, ast.BodyMultiline, ast.BodyOneline:
-		content := tmpl.Render(body.Content, r.variables)
+		content, err := tmpl.Render(body.Content, vars)
+		if err != nil {
+			return []byte(body.Content)
+		}
 		return []byte(content)
 	case ast.BodyBase64:
 		decoded, err := filter.DecodeBase64(body.Content)
@@ -524,7 +579,7 @@ func (r *Runner) buildBody(body *ast.Body) []byte {
 	}
 }
 
-func (r *Runner) applyRequestOptions(req *http.Request, opts *ast.OptionsSection) {
+func (r *Runner) applyRequestOptions(req *http.Request, opts *ast.OptionsSection, vars tmpl.Variables) {
 	if opts == nil {
 		return
 	}
@@ -555,15 +610,25 @@ func (r *Runner) applyRequestOptions(req *http.Request, opts *ast.OptionsSection
 	}
 
 	for k, v := range opts.Variables {
-		r.variables.Set(k, tmpl.Render(v, r.variables))
+		rendered, err := tmpl.Render(v, vars)
+		if err == nil {
+			r.variables.Set(k, rendered)
+		} else {
+			r.variables.Set(k, v)
+		}
 	}
-	
+
 	for k, v := range opts.Headers {
-		req.Header.Set(k, tmpl.Render(v, r.variables))
+		rendered, err := tmpl.Render(v, vars)
+		if err != nil {
+			req.Header.Set(k, v)
+		} else {
+			req.Header.Set(k, rendered)
+		}
 	}
 }
 
-func (r *Runner) processResponse(index int, respDef *ast.Response, result *EntryResult) error {
+func (r *Runner) processResponse(index int, respDef *ast.Response, result *EntryResult, vars tmpl.Variables) error {
 	resp := result.Response
 	body := result.Body
 
@@ -574,7 +639,10 @@ func (r *Runner) processResponse(index int, respDef *ast.Response, result *Entry
 		}
 
 		for _, hdr := range respDef.Headers {
-			expected := tmpl.Render(hdr.Value, r.variables)
+			expected, err := tmpl.Render(hdr.Value, vars)
+			if err != nil {
+				expected = hdr.Value
+			}
 			actual := resp.Header.Get(hdr.Name)
 			if !strings.EqualFold(actual, expected) && actual != expected {
 				return fmt.Errorf("entry %d: header assert failed: expected %s=%s, got %s=%s",
@@ -583,9 +651,9 @@ func (r *Runner) processResponse(index int, respDef *ast.Response, result *Entry
 		}
 
 		if respDef.Body != nil {
-			expectedBody := string(r.buildBody(respDef.Body))
+			expectedBody := string(r.buildBody(respDef.Body, vars))
 			if string(body) != expectedBody {
-				return fmt.Errorf("entry %d: body assert failed", index)
+				return fmt.Errorf("entry %d: body assert failed\nexpected: %q\ngot: %q", index, expectedBody, string(body))
 			}
 		}
 	}
@@ -712,8 +780,7 @@ func (r *Runner) evaluateQuery(query ast.Query, resp *http.Response, body []byte
 }
 
 func (r *Runner) extractCookie(resp *http.Response, name string) (interface{}, error) {
-	attrRe := regexp.MustCompile(`^(.+?)\[(.+)\]$`)
-	matches := attrRe.FindStringSubmatch(name)
+	matches := cookieAttrRe.FindStringSubmatch(name)
 	if len(matches) == 3 {
 		cookieName := matches[1]
 		attrName := matches[2]
@@ -797,8 +864,8 @@ func (r *Runner) checkAssert(index int, assert ast.Assert, value interface{}, ex
 	assertVal := assert.Value
 	if assertVal.Type == ast.ValueString {
 		if strings.Contains(assertVal.Str, "{{") {
-			rendered := tmpl.Render(assertVal.Str, r.variables)
-			if rendered != assertVal.Str {
+			rendered, err := tmpl.Render(assertVal.Str, r.variables)
+			if err == nil && rendered != assertVal.Str {
 				assertVal.Str = rendered
 				if intVal, err := strconv.ParseInt(rendered, 10, 64); err == nil {
 					assertVal.Type = ast.ValueInt
@@ -906,10 +973,25 @@ func readBody(resp *http.Response) ([]byte, error) {
 
 func resolveFilePath(fileRoot string, path string) string {
 	if filepath.IsAbs(path) {
+		if fileRoot != "" {
+			// Validate absolute path stays within fileRoot
+			absFileRoot, _ := filepath.Abs(fileRoot)
+			absPath, _ := filepath.Abs(path)
+			if !strings.HasPrefix(absPath, absFileRoot+string(filepath.Separator)) && absPath != absFileRoot {
+				return "" // Invalid path escapes fileRoot
+			}
+		}
 		return path
 	}
 	if fileRoot != "" {
-		return filepath.Join(fileRoot, path)
+		resolved := filepath.Join(fileRoot, path)
+		// Clean and verify it stays within fileRoot
+		clean := filepath.Clean(resolved)
+		absFileRoot, _ := filepath.Abs(fileRoot)
+		if !strings.HasPrefix(clean, absFileRoot+string(filepath.Separator)) && clean != absFileRoot {
+			return "" // Invalid path escapes fileRoot
+		}
+		return clean
 	}
 	return path
 }
@@ -1162,6 +1244,8 @@ func checkMatches(value interface{}, expected ast.AssertValue, not bool) error {
 }
 
 const maxRegexPatternLen = 1024
+
+var cookieAttrRe = regexp.MustCompile(`^(.+?)\[(.+)\]$`)
 
 func regexpMatch(pattern string, s string) (bool, error) {
 	if len(pattern) > maxRegexPatternLen {

@@ -349,8 +349,13 @@ func TestResolveFilePath(t *testing.T) {
 	if got := resolveFilePath("", "file.txt"); got != "file.txt" {
 		t.Errorf("resolveFilePath('', file.txt) = %q", got)
 	}
-	if got := resolveFilePath("/root", "/abs/path.txt"); got != "/abs/path.txt" {
-		t.Errorf("resolveFilePath(/root, /abs/path.txt) = %q", got)
+	// Absolute paths should be rejected when fileRoot is set (security)
+	if got := resolveFilePath("/root", "/abs/path.txt"); got != "" {
+		t.Errorf("resolveFilePath(/root, /abs/path.txt) = %q, want \"\"", got)
+	}
+	// Relative paths that escape fileRoot should be rejected
+	if got := resolveFilePath("/root", "../etc/passwd"); got != "" {
+		t.Errorf("resolveFilePath(/root, ../etc/passwd) = %q, want \"\"", got)
 	}
 }
 
@@ -379,7 +384,7 @@ func TestBuildBody(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := r.buildBody(tt.body)
+			got := r.buildBody(tt.body, tmpl.NewVariables())
 			if !tt.check(got) {
 				t.Errorf("buildBody(%s) = %q", tt.name, got)
 			}

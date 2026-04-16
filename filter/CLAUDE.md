@@ -8,4 +8,11 @@
 | ID | Time | T | Title | Read |
 |----|------|---|-------|------|
 | #768 | 7:59 PM | ✅ | Added html package import to filter | ~141 |
+
+### Apr 16, 2026
+
+| ID | Time | T | Title | Read |
+|----|------|---|-------|------|
+| #822 | 8:05 PM | 🔵 | Filter tests validate JSONPath extraction and filter chaining | ~340 |
+| #788 | 7:39 PM | 🔵 | Filter system implements 30+ value transformation operations | ~395 |
 </claude-mem-context>

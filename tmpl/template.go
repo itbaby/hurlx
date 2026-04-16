@@ -35,30 +35,40 @@ func (v Variables) Get(name string) (interface{}, bool) {
 	return val, ok
 }
 
-func Render(input string, vars Variables) string {
-	return templateRegex.ReplaceAllStringFunc(input, func(match string) string {
+func Render(input string, vars Variables) (string, error) {
+	var renderErr error
+	result := templateRegex.ReplaceAllStringFunc(input, func(match string) string {
+		if renderErr != nil {
+			return match
+		}
 		expr := strings.TrimSpace(match[2 : len(match)-2])
-		result := evaluateExpr(expr, vars)
-		return fmt.Sprintf("%v", result)
+		val, err := evaluateExpr(expr, vars)
+		if err != nil {
+			renderErr = err
+			return match
+		}
+		return fmt.Sprintf("%v", val)
 	})
+	return result, renderErr
 }
 
-func evaluateExpr(expr string, vars Variables) interface{} {
+func evaluateExpr(expr string, vars Variables) (interface{}, error) {
 	expr = strings.TrimSpace(expr)
 
 	switch {
 	case expr == "newUuid" || expr == "uuid":
-		return generateUUID()
+		val, err := generateUUID()
+		return val, err
 	case expr == "newDate":
-		return time.Now().UTC().Format(time.RFC3339Nano)
+		return time.Now().UTC().Format(time.RFC3339Nano), nil
 	case strings.HasPrefix(expr, "date"):
 		arg := strings.TrimSpace(strings.TrimPrefix(expr, "date"))
 		arg = strings.Trim(arg, " \"'")
 		if arg == "" {
-			return time.Now().UTC().Format(time.RFC3339Nano)
+			return time.Now().UTC().Format(time.RFC3339Nano), nil
 		}
 		goFormat := hurlFormatToGo(arg)
-		return time.Now().UTC().Format(goFormat)
+		return time.Now().UTC().Format(goFormat), nil
 	case strings.HasPrefix(expr, "randomHex"):
 		arg := strings.TrimSpace(strings.TrimPrefix(expr, "randomHex"))
 		arg = strings.Trim(arg, " \"'")
@@ -69,18 +79,18 @@ func evaluateExpr(expr string, vars Variables) interface{} {
 			}
 		}
 		return generateRandomHex(n)
-	case strings.HasPrefix(expr, "getEnv"):
-		arg := strings.TrimSpace(strings.TrimPrefix(expr, "getEnv"))
+	case strings.HasPrefix(expr, "getEnv") || strings.HasPrefix(expr, "getenv"):
+		prefix := "getEnv"
+		if strings.HasPrefix(expr, "getenv") {
+			prefix = "getenv"
+		}
+		arg := strings.TrimSpace(strings.TrimPrefix(expr, prefix))
 		arg = strings.Trim(arg, " \"'")
-		return os.Getenv(arg)
-	case strings.HasPrefix(expr, "getenv"):
-		arg := strings.TrimSpace(strings.TrimPrefix(expr, "getenv"))
-		arg = strings.Trim(arg, " \"'")
-		return os.Getenv(arg)
+		return os.Getenv(arg), nil
 	}
 
 	if val, ok := vars[expr]; ok {
-		return val
+		return val, nil
 	}
 
 	parts := strings.SplitN(expr, ".", 2)
@@ -90,24 +100,23 @@ func evaluateExpr(expr string, vars Variables) interface{} {
 
 		key := module + "." + accessor
 		if val, ok := vars[key]; ok {
-			return val
+			return val, nil
 		}
 
 		if modVars, ok := vars[module].(map[string]interface{}); ok {
 			if val, ok := modVars[accessor]; ok {
-				return val
+				return val, nil
 			}
 		}
 	}
 
-	return "{{" + expr + "}}"
+	return "{{" + expr + "}}", nil
 }
 
-func generateUUID() string {
+func generateUUID() (string, error) {
 	b := make([]byte, 16)
-	_, err := rand.Read(b)
-	if err != nil {
-		panic("failed to generate random bytes: " + err.Error())
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("generate uuid: %w", err)
 	}
 	b[6] = (b[6] & 0x0f) | 0x40 // version 4
 	b[8] = (b[8] & 0x3f) | 0x80 // variant 2 (RFC 4122)
@@ -118,16 +127,15 @@ func generateUUID() string {
 		uint16(b[6])<<8|uint16(b[7]),
 		uint16(b[8])<<8|uint16(b[9]),
 		uint64(b[10])<<40|uint64(b[11])<<32|uint64(b[12])<<24|uint64(b[13])<<16|uint64(b[14])<<8|uint64(b[15]),
-	)
+	), nil
 }
 
-func generateRandomHex(n int) string {
+func generateRandomHex(n int) (string, error) {
 	b := make([]byte, n)
-	_, err := rand.Read(b)
-	if err != nil {
-		panic("failed to generate random bytes: " + err.Error())
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("generate random hex: %w", err)
 	}
-	return hex.EncodeToString(b)
+	return hex.EncodeToString(b), nil
 }
 
 // hurlFormatToGo converts Java-style date format patterns (as used in Hurl/README)
@@ -161,7 +169,7 @@ func hurlFormatToGo(format string) string {
 	// Also support strftime-style for compatibility
 	strftimeReplacements := []struct {
 		strftime string
-		goFmt    string
+		goFmt   string
 	}{
 		{"%Y", "2006"},
 		{"%m", "01"},

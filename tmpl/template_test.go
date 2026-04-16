@@ -8,7 +8,10 @@ import (
 func TestRenderVariable(t *testing.T) {
 	vars := NewVariables()
 	vars.Set("name", "world")
-	result := Render("hello {{name}}!", vars)
+	result, err := Render("hello {{name}}!", vars)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if result != "hello world!" {
 		t.Errorf("expected 'hello world!', got %q", result)
 	}
@@ -18,7 +21,10 @@ func TestRenderMultipleVariables(t *testing.T) {
 	vars := NewVariables()
 	vars.Set("host", "example.org")
 	vars.Set("port", "8080")
-	result := Render("https://{{host}}:{{port}}/api", vars)
+	result, err := Render("https://{{host}}:{{port}}/api", vars)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if result != "https://example.org:8080/api" {
 		t.Errorf("unexpected result: %s", result)
 	}
@@ -26,7 +32,10 @@ func TestRenderMultipleVariables(t *testing.T) {
 
 func TestRenderNewUuid(t *testing.T) {
 	vars := NewVariables()
-	result := Render("{{newUuid}}", vars)
+	result, err := Render("{{newUuid}}", vars)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if len(result) != 36 {
 		t.Errorf("expected UUID length 36, got %d: %s", len(result), result)
 	}
@@ -34,7 +43,10 @@ func TestRenderNewUuid(t *testing.T) {
 
 func TestRenderNewDate(t *testing.T) {
 	vars := NewVariables()
-	result := Render("{{newDate}}", vars)
+	result, err := Render("{{newDate}}", vars)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if len(result) < 20 {
 		t.Errorf("expected date string, got %s", result)
 	}
@@ -42,7 +54,10 @@ func TestRenderNewDate(t *testing.T) {
 
 func TestRenderUndefined(t *testing.T) {
 	vars := NewVariables()
-	result := Render("{{undefined_var}}", vars)
+	result, err := Render("{{undefined_var}}", vars)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if result != "{{undefined_var}}" {
 		t.Errorf("expected original template, got %s", result)
 	}
@@ -60,7 +75,10 @@ func TestVariablesClone(t *testing.T) {
 
 func TestRenderUuid(t *testing.T) {
 	vars := NewVariables()
-	result := Render("{{uuid}}", vars)
+	result, err := Render("{{uuid}}", vars)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if len(result) != 36 {
 		t.Errorf("expected UUID length 36, got %d: %s", len(result), result)
 	}
@@ -73,7 +91,10 @@ func TestRenderUuid(t *testing.T) {
 func TestRenderDate(t *testing.T) {
 	vars := NewVariables()
 	// Java-style format from README
-	result := Render("{{date 'yyyy-MM-dd'}}", vars)
+	result, err := Render("{{date 'yyyy-MM-dd'}}", vars)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if len(result) != 10 {
 		t.Errorf("expected date length 10 (yyyy-MM-dd), got %d: %s", len(result), result)
 	}
@@ -81,7 +102,10 @@ func TestRenderDate(t *testing.T) {
 
 func TestRenderDateNoFormat(t *testing.T) {
 	vars := NewVariables()
-	result := Render("{{date}}", vars)
+	result, err := Render("{{date}}", vars)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if len(result) < 20 {
 		t.Errorf("expected date string, got %s", result)
 	}
@@ -89,7 +113,10 @@ func TestRenderDateNoFormat(t *testing.T) {
 
 func TestRenderRandomHex(t *testing.T) {
 	vars := NewVariables()
-	result := Render("{{randomHex 16}}", vars)
+	result, err := Render("{{randomHex 16}}", vars)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if len(result) != 32 { // 16 bytes = 32 hex chars
 		t.Errorf("expected hex length 32, got %d: %s", len(result), result)
 	}
@@ -97,7 +124,10 @@ func TestRenderRandomHex(t *testing.T) {
 
 func TestRenderRandomHexDefault(t *testing.T) {
 	vars := NewVariables()
-	result := Render("{{randomHex}}", vars)
+	result, err := Render("{{randomHex}}", vars)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if len(result) != 64 { // default 32 bytes = 64 hex chars
 		t.Errorf("expected hex length 64, got %d: %s", len(result), result)
 	}
@@ -105,7 +135,22 @@ func TestRenderRandomHexDefault(t *testing.T) {
 
 func TestRenderGetenvLowercase(t *testing.T) {
 	vars := NewVariables()
-	result := Render("{{getenv 'HOME'}}", vars)
+	result, err := Render("{{getenv 'HOME'}}", vars)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	home := os.Getenv("HOME")
+	if result != home {
+		t.Errorf("expected %q, got %q", home, result)
+	}
+}
+
+func TestRenderGetenvMixedCase(t *testing.T) {
+	vars := NewVariables()
+	result, err := Render("{{getEnv 'HOME'}}", vars)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	home := os.Getenv("HOME")
 	if result != home {
 		t.Errorf("expected %q, got %q", home, result)

@@ -20,14 +20,16 @@ type ResolvedFile struct {
 }
 
 type Resolver struct {
-	cache    map[string]*ResolvedFile
-	fileRoot string
+	cache     map[string]*ResolvedFile
+	resolving map[string]bool // tracks paths currently being resolved (cycle detection)
+	fileRoot  string
 }
 
 func NewResolver(fileRoot string) *Resolver {
 	return &Resolver{
-		cache:    make(map[string]*ResolvedFile),
-		fileRoot: fileRoot,
+		cache:     make(map[string]*ResolvedFile),
+		resolving: make(map[string]bool),
+		fileRoot:  fileRoot,
 	}
 }
 
@@ -80,6 +82,12 @@ func (r *Resolver) buildResolved(file *ast.File, filePath string) (*ResolvedFile
 		return rf, nil
 	}
 
+	if r.resolving[absPath] {
+		return nil, fmt.Errorf("circular import detected: %q is already being resolved", absPath)
+	}
+	r.resolving[absPath] = true
+	defer func() { delete(r.resolving, absPath) }()
+
 	rf := &ResolvedFile{
 		File:       file,
 		FilePath:   absPath,
@@ -127,6 +135,9 @@ func (r *Resolver) buildResolved(file *ast.File, filePath string) (*ResolvedFile
 		rf.Imports[alias] = resolved
 
 		for name, value := range resolved.AllExports {
+			if existing, exists := rf.AllExports[name]; exists && existing != value {
+				return nil, fmt.Errorf("in file %s: export %q has conflicting values: %q (from %s) vs %q (already defined)", absPath, name, value, alias, existing)
+			}
 			rf.AllExports[name] = value
 		}
 	}

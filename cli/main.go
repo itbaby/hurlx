@@ -15,7 +15,7 @@ import (
 )
 
 var (
-	version = "1.0.9"
+	version = "1.0.10"
 
 	flagVariable        arrayFlags
 	flagVariablesFile   string
@@ -275,11 +275,11 @@ func expandFiles(files []string) []string {
 		} else {
 			info, err := os.Stat(f)
 			if err == nil && info.IsDir() {
-				filepath.Walk(f, func(path string, info os.FileInfo, err error) error {
+				filepath.WalkDir(f, func(path string, d os.DirEntry, err error) error {
 					if err != nil {
-						return nil
+						return err
 					}
-					if !info.IsDir() && (strings.HasSuffix(path, ".hurlx") || strings.HasSuffix(path, ".hurl")) {
+					if !d.IsDir() && (strings.HasSuffix(path, ".hurlx") || strings.HasSuffix(path, ".hurl")) {
 						expanded = append(expanded, path)
 					}
 					return nil
@@ -306,7 +306,9 @@ func printNormalResult(result *runner.RunResult) {
 	}
 
 	if flagOutput != "" && flagOutput != "-" {
-		os.WriteFile(flagOutput, last.Body, 0644)
+		if err := os.WriteFile(flagOutput, last.Body, 0644); err != nil {
+			fmt.Fprintf(os.Stderr, "Error writing output file: %v\n", err)
+		}
 	} else {
 		if flagInclude && last.Response != nil {
 			fmt.Printf("%s %d\n", last.Response.Proto, last.Response.StatusCode)
@@ -382,6 +384,10 @@ func printJSONResult(file string, result *runner.RunResult) {
 		output.Entries = append(output.Entries, entry)
 	}
 
-	data, _ := json.MarshalIndent(output, "", "  ")
+	data, err := json.MarshalIndent(output, "", "  ")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error marshaling JSON output: %v\n", err)
+		return
+	}
 	fmt.Println(string(data))
 }

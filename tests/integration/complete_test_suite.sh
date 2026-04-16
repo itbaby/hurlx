@@ -25,7 +25,7 @@ echo ""
 run_test() {
     local name="$1"
     local file="$2"
-    if ./hurlx --test "$file" 2>&1 | grep -q "SUCCESS\|PASS"; then
+    if ./hurlx_test_bin --test "$file" 2>&1 | grep -q "SUCCESS\|PASS"; then
         echo -e "${GREEN}✓${NC} $name"
         PASS=$((PASS + 1))
     else
