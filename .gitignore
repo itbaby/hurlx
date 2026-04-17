@@ -36,8 +36,8 @@ bin/
 .claude/
 .workbuddy/memory/
 
-# CI/CD workflows (managed separately, not committed here)
-.github/workflows/
+# CI notes — keep build.yml tracked; only exclude AI-generated notes
+.github/workflows/CLAUDE.md
 
 # Local test binaries
 hurlx_test_bin
