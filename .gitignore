@@ -31,3 +31,13 @@ bin/
 # Environment files (if containing secrets)
 .env
 .env.local
+
+# AI assistant / local tooling (not for version control)
+.claude/
+.workbuddy/memory/
+
+# CI/CD workflows (managed separately, not committed here)
+.github/workflows/
+
+# Local test binaries
+hurlx_test_bin
