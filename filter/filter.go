@@ -459,6 +459,7 @@ func DecodeBase64(s string) ([]byte, error) {
 func decodeBase64(s string) ([]byte, error) {
 	s = strings.ReplaceAll(s, "\n", "")
 	s = strings.ReplaceAll(s, " ", "")
+	s = strings.TrimRight(s, "=")
 	data, err := base64.StdEncoding.WithPadding(base64.NoPadding).DecodeString(s)
 	if err != nil {
 		return nil, fmt.Errorf("base64Decode: %w", err)

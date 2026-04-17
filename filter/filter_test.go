@@ -102,6 +102,70 @@ func TestFilterToString(t *testing.T) {
 	}
 }
 
+func TestBase64RoundTrip(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{"hello", "Hello, World!"},
+		{"empty", ""},
+		{"one byte", "A"},
+		{"two bytes", "AB"},
+		{"three bytes", "ABC"},
+		{"json", `{"key":"value"}`},
+		{"binary", "\x00\x01\x02\xff"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			encoded := encodeBase64([]byte(tt.input))
+			decoded, err := decodeBase64(encoded)
+			if err != nil {
+				t.Fatalf("decodeBase64(%q) error: %v", encoded, err)
+			}
+			if string(decoded) != tt.input {
+				t.Errorf("round-trip failed: input=%q, encoded=%q, decoded=%q", tt.input, encoded, decoded)
+			}
+		})
+	}
+}
+
+func TestBase64DecodePadded(t *testing.T) {
+	// Users commonly provide padded base64 input
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"SGVsbG8=", "Hello"},
+		{"QVBC", "APB"},
+		{"AA==", "\x00"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			decoded, err := decodeBase64(tt.input)
+			if err != nil {
+				t.Fatalf("decodeBase64(%q) error: %v", tt.input, err)
+			}
+			if string(decoded) != tt.expected {
+				t.Errorf("expected %q, got %q", tt.expected, decoded)
+			}
+		})
+	}
+}
+
+func TestBase64UrlSafeRoundTrip(t *testing.T) {
+	input := "Hello, World!"
+	encoded := encodeBase64URLSafe([]byte(input))
+	decoded, err := decodeBase64URLSafe(encoded)
+	if err != nil {
+		t.Fatalf("decodeBase64URLSafe error: %v", err)
+	}
+	if string(decoded) != input {
+		t.Errorf("round-trip failed: input=%q, encoded=%q, decoded=%q", input, encoded, decoded)
+	}
+}
+
 func TestFilterChaining(t *testing.T) {
 	input := "a,b,c,d"
 	result, err := Apply(input, []ast.Filter{

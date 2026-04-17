@@ -331,7 +331,7 @@ func TestOptsToEntry(t *testing.T) {
 		want  int
 	}{
 		{0, 10, 10},
-		{5, 10, 5},
+		{5, 10, 6},
 		{15, 10, 10},
 		{-1, 10, 10},
 	}

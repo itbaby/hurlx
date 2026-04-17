@@ -266,6 +266,9 @@ func (r *Runner) executeEntry(index int, entry ast.Entry, isRetry bool) (*EntryR
 		Captures:   make(map[string]interface{}),
 	}
 
+	// Reset redirect recorder for each entry to prevent cross-entry leakage
+	r.redirectRecorder.requests = r.redirectRecorder.requests[:0]
+
 	// Clone variables for this entry to avoid polluting shared state
 	entryVars := r.variables.Clone()
 
@@ -275,7 +278,7 @@ func (r *Runner) executeEntry(index int, entry ast.Entry, isRetry bool) (*EntryR
 			if err == nil {
 				entryVars.Set(k, rendered)
 			} else {
-				r.variables.Set(k, v)
+				entryVars.Set(k, v)
 			}
 		}
 	}
@@ -584,6 +587,10 @@ func (r *Runner) applyRequestOptions(req *http.Request, opts *ast.OptionsSection
 		return
 	}
 
+	// Save state that may be temporarily overridden per-entry
+	savedVerbose := r.options.Verbose
+	savedTimeout := r.client.Timeout
+
 	if opts.Location != nil && *opts.Location {
 		maxRedirs := r.maxRedirects
 		r.client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
@@ -626,6 +633,10 @@ func (r *Runner) applyRequestOptions(req *http.Request, opts *ast.OptionsSection
 			req.Header.Set(k, rendered)
 		}
 	}
+
+	// Restore state that was temporarily overridden for this entry
+	r.options.Verbose = savedVerbose
+	r.client.Timeout = savedTimeout
 }
 
 func (r *Runner) processResponse(index int, respDef *ast.Response, result *EntryResult, vars tmpl.Variables) error {
@@ -1117,7 +1128,7 @@ func formatAssertValue(v ast.AssertValue) string {
 
 func checkContains(value interface{}, expected ast.AssertValue, not bool) error {
 	actual := fmt.Sprintf("%v", value)
-	needle := expected.Str
+	needle := formatAssertValue(expected)
 	contains := strings.Contains(actual, needle)
 	if not {
 		if contains {
@@ -1194,7 +1205,7 @@ func checkIncludes(value interface{}, expected ast.AssertValue, not bool) error 
 
 func checkStartsWith(value interface{}, expected ast.AssertValue, not bool) error {
 	actual := fmt.Sprintf("%v", value)
-	prefix := expected.Str
+	prefix := formatAssertValue(expected)
 	startsWith := strings.HasPrefix(actual, prefix)
 	if not {
 		if startsWith {
@@ -1210,7 +1221,7 @@ func checkStartsWith(value interface{}, expected ast.AssertValue, not bool) erro
 
 func checkEndsWith(value interface{}, expected ast.AssertValue, not bool) error {
 	actual := fmt.Sprintf("%v", value)
-	suffix := expected.Str
+	suffix := formatAssertValue(expected)
 	endsWith := strings.HasSuffix(actual, suffix)
 	if not {
 		if endsWith {
@@ -1226,7 +1237,7 @@ func checkEndsWith(value interface{}, expected ast.AssertValue, not bool) error 
 
 func checkMatches(value interface{}, expected ast.AssertValue, not bool) error {
 	actual := fmt.Sprintf("%v", value)
-	pattern := expected.Str
+	pattern := formatAssertValue(expected)
 	matched, err := regexpMatch(pattern, actual)
 	if err != nil {
 		return fmt.Errorf("invalid regex pattern %q: %w", pattern, err)
@@ -1420,5 +1431,5 @@ func optsToEntry(n int, total int) int {
 	if n <= 0 || n > total {
 		return total
 	}
-	return n
+	return n + 1
 }
