@@ -46,6 +46,7 @@ jobs:
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
+          VERSION: ${{ steps.version.outputs.VERSION }}
         run: |
           EXT=""
           if [ "$GOOS" = "windows" ]; then
