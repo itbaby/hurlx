@@ -1,6 +1,7 @@
 package filter
 
 import (
+	"encoding/base64"
 	"testing"
 
 	"github.com/wei-lli/hurlx/ast"
@@ -163,6 +164,19 @@ func TestBase64UrlSafeRoundTrip(t *testing.T) {
 	}
 	if string(decoded) != input {
 		t.Errorf("round-trip failed: input=%q, encoded=%q, decoded=%q", input, encoded, decoded)
+	}
+}
+
+func TestBase64UrlSafeDecodePadded(t *testing.T) {
+	// Padded URL-safe base64 input (P2-2: TrimRight fix)
+	input := "Hello, World!"
+	padded := base64.URLEncoding.EncodeToString([]byte(input)) // produces padded output
+	decoded, err := decodeBase64URLSafe(padded)
+	if err != nil {
+		t.Fatalf("decodeBase64URLSafe with padding error: %v", err)
+	}
+	if string(decoded) != input {
+		t.Errorf("padded decode failed: input=%q, padded=%q, decoded=%q", input, padded, decoded)
 	}
 }
 

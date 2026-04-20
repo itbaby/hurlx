@@ -472,6 +472,7 @@ func encodeBase64(data []byte) string {
 }
 
 func decodeBase64URLSafe(s string) ([]byte, error) {
+	s = strings.TrimRight(s, "=")
 	s = strings.ReplaceAll(s, "\n", "")
 	s = strings.ReplaceAll(s, " ", "")
 	data, err := base64.URLEncoding.WithPadding(base64.NoPadding).DecodeString(s)

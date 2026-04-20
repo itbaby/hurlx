@@ -227,6 +227,11 @@ func TestParseDuration(t *testing.T) {
 		{"500", 500 * time.Millisecond},
 		{"invalid", 0},
 		{"", 0},
+		// Float durations (P2-5)
+		{"1.5s", 1500 * time.Millisecond},
+		{"0.5m", 30 * time.Second},
+		{"0.25h", 15 * time.Minute},
+		{"50.5ms", 50*time.Millisecond + 500*time.Microsecond},
 	}
 	for _, tt := range tests {
 		if got := ParseDuration(tt.input); got != tt.want {
@@ -293,6 +298,29 @@ func TestCheckMatches(t *testing.T) {
 	}
 	if err := checkMatches("hello", ast.AssertValue{Type: ast.ValueString, Str: "^\\d+$"}, false); err == nil {
 		t.Error("expected error for non-matching regex")
+	}
+}
+
+func TestCheckIncludes(t *testing.T) {
+	// String match should work for ValueString type
+	err := checkIncludes([]interface{}{"a", "b", "c"}, ast.AssertValue{Type: ast.ValueString, Str: "b"}, false)
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	// String "42" should NOT match int64(42) when type is ValueInt
+	err = checkIncludes([]interface{}{int64(42)}, ast.AssertValue{Type: ast.ValueString, Str: "42"}, false)
+	if err != nil {
+		t.Errorf("string type should find '42' via Sprintf: %v", err)
+	}
+	// Int match should work for ValueInt type
+	err = checkIncludes([]interface{}{int64(10), int64(42)}, ast.AssertValue{Type: ast.ValueInt, Int: 42}, false)
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	// String match should NOT falsely match bool when type is ValueString
+	err = checkIncludes([]interface{}{true}, ast.AssertValue{Type: ast.ValueString, Str: "nonexistent"}, false)
+	if err == nil {
+		t.Error("expected not-found error")
 	}
 }
 

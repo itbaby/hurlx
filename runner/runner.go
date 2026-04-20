@@ -619,8 +619,10 @@ func (r *Runner) applyRequestOptions(req *http.Request, opts *ast.OptionsSection
 	for k, v := range opts.Variables {
 		rendered, err := tmpl.Render(v, vars)
 		if err == nil {
+			vars.Set(k, rendered)
 			r.variables.Set(k, rendered)
 		} else {
+			vars.Set(k, v)
 			r.variables.Set(k, v)
 		}
 	}
@@ -670,7 +672,7 @@ func (r *Runner) processResponse(index int, respDef *ast.Response, result *Entry
 	}
 
 	for _, cap := range respDef.Captures {
-		value, err := r.evaluateQuery(cap.Query, resp, body, result)
+		value, err := r.evaluateQuery(cap.Query, resp, body, result, vars)
 		if err != nil {
 			return fmt.Errorf("entry %d: capture %s failed: %w", index, cap.Variable, err)
 		}
@@ -682,15 +684,16 @@ func (r *Runner) processResponse(index int, respDef *ast.Response, result *Entry
 			}
 		}
 
+		vars.Set(cap.Variable, value)
 		r.variables.Set(cap.Variable, value)
 		result.Captures[cap.Variable] = value
 	}
 
 	for _, assert := range respDef.Asserts {
-		value, err := r.evaluateQuery(assert.Query, resp, body, result)
+		value, err := r.evaluateQuery(assert.Query, resp, body, result, vars)
 		if err != nil {
 			if assert.Predicate == ast.PredExists {
-				r.checkAssert(index, assert, nil, false)
+				r.checkAssert(index, assert, nil, false, vars)
 				continue
 			}
 			return fmt.Errorf("entry %d: assert query failed: %w", index, err)
@@ -701,7 +704,7 @@ func (r *Runner) processResponse(index int, respDef *ast.Response, result *Entry
 			exists = false
 		}
 		if assert.Predicate == ast.PredExists {
-			if err := r.checkAssert(index, assert, value, exists); err != nil {
+			if err := r.checkAssert(index, assert, value, exists, vars); err != nil {
 				if !r.options.ContinueOnError {
 					return err
 				}
@@ -716,7 +719,7 @@ func (r *Runner) processResponse(index int, respDef *ast.Response, result *Entry
 			}
 		}
 
-		if err := r.checkAssert(index, assert, value, true); err != nil {
+		if err := r.checkAssert(index, assert, value, true, vars); err != nil {
 			if !r.options.ContinueOnError {
 				return err
 			}
@@ -726,7 +729,7 @@ func (r *Runner) processResponse(index int, respDef *ast.Response, result *Entry
 	return nil
 }
 
-func (r *Runner) evaluateQuery(query ast.Query, resp *http.Response, body []byte, result *EntryResult) (interface{}, error) {
+func (r *Runner) evaluateQuery(query ast.Query, resp *http.Response, body []byte, result *EntryResult, vars tmpl.Variables) (interface{}, error) {
 	switch query.Type {
 	case ast.QueryStatus:
 		return resp.StatusCode, nil
@@ -781,7 +784,7 @@ func (r *Runner) evaluateQuery(query ast.Query, resp *http.Response, body []byte
 		h := md5.Sum(body)
 		return hex.EncodeToString(h[:]), nil
 	case ast.QueryVariable:
-		if val, ok := r.variables.Get(query.Value); ok {
+		if val, ok := vars.Get(query.Value); ok {
 			return val, nil
 		}
 		return nil, fmt.Errorf("variable %q not found", query.Value)
@@ -830,7 +833,7 @@ func (r *Runner) extractCookie(resp *http.Response, name string) (interface{}, e
 	return "", fmt.Errorf("cookie %q not found", name)
 }
 
-func (r *Runner) checkAssert(index int, assert ast.Assert, value interface{}, exists bool) error {
+func (r *Runner) checkAssert(index int, assert ast.Assert, value interface{}, exists bool, vars tmpl.Variables) error {
 	if assert.Predicate == ast.PredExists {
 		if assert.Not {
 			if exists {
@@ -875,7 +878,7 @@ func (r *Runner) checkAssert(index int, assert ast.Assert, value interface{}, ex
 	assertVal := assert.Value
 	if assertVal.Type == ast.ValueString {
 		if strings.Contains(assertVal.Str, "{{") {
-			rendered, err := tmpl.Render(assertVal.Str, r.variables)
+			rendered, err := tmpl.Render(assertVal.Str, vars)
 			if err == nil && rendered != assertVal.Str {
 				assertVal.Str = rendered
 				if intVal, err := strconv.ParseInt(rendered, 10, 64); err == nil {
@@ -1010,27 +1013,27 @@ func resolveFilePath(fileRoot string, path string) string {
 func ParseDuration(s string) time.Duration {
 	s = strings.TrimSpace(s)
 	if strings.HasSuffix(s, "ms") {
-		if n, err := strconv.ParseInt(strings.TrimSuffix(s, "ms"), 10, 64); err == nil {
-			return time.Duration(n) * time.Millisecond
+		if f, err := strconv.ParseFloat(strings.TrimSuffix(s, "ms"), 64); err == nil {
+			return time.Duration(f * float64(time.Millisecond))
 		}
 	}
 	if strings.HasSuffix(s, "s") {
-		if n, err := strconv.ParseInt(strings.TrimSuffix(s, "s"), 10, 64); err == nil {
-			return time.Duration(n) * time.Second
+		if f, err := strconv.ParseFloat(strings.TrimSuffix(s, "s"), 64); err == nil {
+			return time.Duration(f * float64(time.Second))
 		}
 	}
 	if strings.HasSuffix(s, "m") && !strings.HasSuffix(s, "ms") {
-		if n, err := strconv.ParseInt(strings.TrimSuffix(s, "m"), 10, 64); err == nil {
-			return time.Duration(n) * time.Minute
+		if f, err := strconv.ParseFloat(strings.TrimSuffix(s, "m"), 64); err == nil {
+			return time.Duration(f * float64(time.Minute))
 		}
 	}
 	if strings.HasSuffix(s, "h") {
-		if n, err := strconv.ParseInt(strings.TrimSuffix(s, "h"), 10, 64); err == nil {
-			return time.Duration(n) * time.Hour
+		if f, err := strconv.ParseFloat(strings.TrimSuffix(s, "h"), 64); err == nil {
+			return time.Duration(f * float64(time.Hour))
 		}
 	}
-	if n, err := strconv.ParseInt(s, 10, 64); err == nil {
-		return time.Duration(n) * time.Millisecond
+	if f, err := strconv.ParseFloat(s, 64); err == nil {
+		return time.Duration(f * float64(time.Millisecond))
 	}
 	return 0
 }
@@ -1169,9 +1172,11 @@ func checkIncludes(value interface{}, expected ast.AssertValue, not bool) error 
 
 	var found bool
 	for _, item := range collection {
-		if fmt.Sprintf("%v", item) == expected.Str {
-			found = true
-			break
+		if expected.Type == ast.ValueString {
+			if fmt.Sprintf("%v", item) == expected.Str {
+				found = true
+				break
+			}
 		}
 		if expected.Type == ast.ValueInt {
 			if i, ok := item.(int64); ok && i == expected.Int {

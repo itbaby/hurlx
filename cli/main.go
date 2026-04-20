@@ -15,7 +15,7 @@ import (
 )
 
 var (
-	version = "1.0.12"
+	version = "1.0.13"
 
 	flagVariable        arrayFlags
 	flagVariablesFile   string
@@ -306,7 +306,13 @@ func printNormalResult(result *runner.RunResult) {
 	}
 
 	if flagOutput != "" && flagOutput != "-" {
-		if err := os.WriteFile(flagOutput, last.Body, 0644); err != nil {
+		body := last.Body
+		if shouldUsePretty(last.Response.Header.Get("Content-Type")) && isValidJSON(body) {
+			if prettified, err := prettifyJSON(body); err == nil {
+				body = prettified
+			}
+		}
+		if err := os.WriteFile(flagOutput, body, 0644); err != nil {
 			fmt.Fprintf(os.Stderr, "Error writing output file: %v\n", err)
 		}
 	} else {
@@ -317,8 +323,9 @@ func printNormalResult(result *runner.RunResult) {
 			}
 			fmt.Println()
 		}
-		os.Stdout.Write(last.Body)
-		if len(last.Body) > 0 && last.Body[len(last.Body)-1] != '\n' {
+		body := formatBody(last.Body, last.Response.Header.Get("Content-Type"))
+		os.Stdout.Write(body)
+		if len(body) > 0 && body[len(body)-1] != '\n' {
 			fmt.Println()
 		}
 	}
@@ -389,5 +396,9 @@ func printJSONResult(file string, result *runner.RunResult) {
 		fmt.Fprintf(os.Stderr, "Error marshaling JSON output: %v\n", err)
 		return
 	}
-	fmt.Println(string(data))
+	if shouldUseColor() {
+		fmt.Println(string(colorizeJSON(data)))
+	} else {
+		fmt.Println(string(data))
+	}
 }
