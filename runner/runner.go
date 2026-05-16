@@ -590,6 +590,7 @@ func (r *Runner) applyRequestOptions(req *http.Request, opts *ast.OptionsSection
 	// Save state that may be temporarily overridden per-entry
 	savedVerbose := r.options.Verbose
 	savedTimeout := r.client.Timeout
+	savedCheckRedirect := r.client.CheckRedirect
 
 	if opts.Location != nil && *opts.Location {
 		maxRedirs := r.maxRedirects
@@ -639,6 +640,7 @@ func (r *Runner) applyRequestOptions(req *http.Request, opts *ast.OptionsSection
 	// Restore state that was temporarily overridden for this entry
 	r.options.Verbose = savedVerbose
 	r.client.Timeout = savedTimeout
+	r.client.CheckRedirect = savedCheckRedirect
 }
 
 func (r *Runner) processResponse(index int, respDef *ast.Response, result *EntryResult, vars tmpl.Variables) error {
@@ -1436,5 +1438,5 @@ func optsToEntry(n int, total int) int {
 	if n <= 0 || n > total {
 		return total
 	}
-	return n + 1
+	return n
 }

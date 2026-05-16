@@ -17,7 +17,6 @@ var responseStatusRegex = regexp.MustCompile(`^HTTP(?:/([\d.]+))?\s+(\d+|\*)`)
 type Parser struct {
 	scanner  *bufio.Scanner
 	line     int
-	col      int
 	lineStr  string
 	pos      int
 	file     string
@@ -82,7 +81,7 @@ func (p *Parser) Parse() (*ast.File, error) {
 			continue
 		}
 
-		p.pos = len(p.lineStr)
+		return nil, fmt.Errorf("line %d: unexpected content: %s", p.line, line)
 	}
 
 	return file, nil
@@ -121,6 +120,11 @@ func (p *Parser) rawLine() string {
 
 func (p *Parser) skipEmptyAndComments(file *ast.File) {
 	for {
+		if p.pos >= len(p.lineStr) {
+			if !p.nextLine() {
+				break
+			}
+		}
 		line := p.currentLine()
 		if line == "" {
 			if strings.HasPrefix(p.rawLine(), "#") {
@@ -130,15 +134,15 @@ func (p *Parser) skipEmptyAndComments(file *ast.File) {
 				})
 			}
 			p.pos = len(p.lineStr)
-			return
+			continue
 		}
 		if strings.HasPrefix(line, "#") {
 			file.Comments = append(file.Comments, ast.Comment{
-				Text:     line[1:],
+				Text:     strings.TrimPrefix(p.rawLine(), "#"),
 				Position: ast.Position{Line: p.line},
 			})
 			p.pos = len(p.lineStr)
-			return
+			continue
 		}
 		return
 	}
@@ -206,8 +210,6 @@ func (p *Parser) parseEntry() (*ast.Entry, error) {
 	}
 
 	if line == "" {
-		savedLine := p.lineStr
-		savedPos := p.pos
 		for p.nextLine() {
 			next := p.currentLine()
 			if next == "" {
@@ -221,8 +223,7 @@ func (p *Parser) parseEntry() (*ast.Entry, error) {
 				entry.Response = resp
 				return entry, nil
 			}
-			p.lineStr = savedLine
-			p.pos = savedPos
+			p.unreadLine()
 			return entry, nil
 		}
 	}
@@ -249,7 +250,10 @@ func (p *Parser) parseRequest() (*ast.Request, error) {
 			}
 		}
 		line := p.currentLine()
-		if line == "" || isMethod(line) || isResponseStatus(line) || strings.HasPrefix(line, "import ") || strings.HasPrefix(line, "export ") {
+		if line == "" {
+			continue
+		}
+		if isMethod(line) || isResponseStatus(line) || strings.HasPrefix(line, "import ") || strings.HasPrefix(line, "export ") {
 			return req, nil
 		}
 
@@ -305,7 +309,10 @@ func (p *Parser) parseKeyValueSection() []ast.KeyValue {
 	var kvs []ast.KeyValue
 	for p.nextLine() {
 		line := p.currentLine()
-		if line == "" || isSection(line) || isMethod(line) || isResponseStatus(line) || strings.HasPrefix(line, "[") {
+		if line == "" {
+			continue
+		}
+		if isSection(line) || isMethod(line) || isResponseStatus(line) || strings.HasPrefix(line, "[") {
 			p.unreadLine()
 			return kvs
 		}
@@ -324,7 +331,10 @@ func (p *Parser) parseMultipartSection() []ast.MultipartField {
 	var fields []ast.MultipartField
 	for p.nextLine() {
 		line := p.currentLine()
-		if line == "" || isSection(line) || isMethod(line) || isResponseStatus(line) {
+		if line == "" {
+			continue
+		}
+		if isSection(line) || isMethod(line) || isResponseStatus(line) {
 			p.unreadLine()
 			return fields
 		}
@@ -354,21 +364,24 @@ func (p *Parser) parseMultipartSection() []ast.MultipartField {
 }
 
 func (p *Parser) parseBasicAuth() *ast.BasicAuth {
-	if !p.nextLine() {
-		return nil
+	for p.nextLine() {
+		line := p.currentLine()
+		if line == "" {
+			continue
+		}
+		if isSection(line) {
+			return nil
+		}
+		idx := strings.Index(line, ":")
+		if idx < 0 {
+			return &ast.BasicAuth{Username: line}
+		}
+		return &ast.BasicAuth{
+			Username: strings.TrimSpace(line[:idx]),
+			Password: strings.TrimSpace(line[idx+1:]),
+		}
 	}
-	line := p.currentLine()
-	if line == "" || isSection(line) {
-		return nil
-	}
-	idx := strings.Index(line, ":")
-	if idx < 0 {
-		return &ast.BasicAuth{Username: line}
-	}
-	return &ast.BasicAuth{
-		Username: strings.TrimSpace(line[:idx]),
-		Password: strings.TrimSpace(line[idx+1:]),
-	}
+	return nil
 }
 
 func (p *Parser) parseOptionsSection() *ast.OptionsSection {
@@ -378,7 +391,10 @@ func (p *Parser) parseOptionsSection() *ast.OptionsSection {
 	}
 	for p.nextLine() {
 		line := p.currentLine()
-		if line == "" || isSection(line) || isMethod(line) || isResponseStatus(line) {
+		if line == "" {
+			continue
+		}
+		if isSection(line) || isMethod(line) || isResponseStatus(line) {
 			p.unreadLine()
 			return opts
 		}
@@ -505,12 +521,29 @@ func (p *Parser) parseJSONBody() (*ast.Body, error) {
 	var sb strings.Builder
 	braceCount := 0
 	bracketCount := 0
+	inString := false
+	escaped := false
 
 	for {
 		line := p.rawLine()
 		trimmed := strings.TrimSpace(line)
 
 		for _, ch := range trimmed {
+			if escaped {
+				escaped = false
+				continue
+			}
+			if ch == '\\' {
+				escaped = true
+				continue
+			}
+			if ch == '"' {
+				inString = !inString
+				continue
+			}
+			if inString {
+				continue
+			}
 			switch ch {
 			case '{':
 				braceCount++
@@ -528,7 +561,7 @@ func (p *Parser) parseJSONBody() (*ast.Body, error) {
 		}
 		sb.WriteString(line)
 
-		if braceCount <= 0 && bracketCount <= 0 {
+		if braceCount <= 0 && bracketCount <= 0 && !inString {
 			break
 		}
 
@@ -547,21 +580,56 @@ func (p *Parser) parseXMLBody() (*ast.Body, error) {
 	var sb strings.Builder
 	tagCount := 0
 	inTag := false
+	inComment := false
+	inPI := false
+	inCDATA := false
 
 	for {
 		line := p.rawLine()
 		trimmed := strings.TrimSpace(line)
 
 		for i, ch := range trimmed {
-			if ch == '<' && i+1 < len(trimmed) && trimmed[i+1] != '/' && !strings.HasPrefix(trimmed[i:], "<!") && !strings.HasPrefix(trimmed[i:], "<?") {
-				tagCount++
-				inTag = true
+			if inComment {
+				if ch == '>' && i >= 2 && trimmed[i-2:i+1] == "-->" {
+					inComment = false
+				}
+				continue
+			}
+			if inPI {
+				if ch == '>' && i >= 1 && trimmed[i-1:i+1] == "?>" {
+					inPI = false
+				}
+				continue
+			}
+			if inCDATA {
+				if ch == '>' && i >= 2 && trimmed[i-2:i+1] == "]]>" {
+					inCDATA = false
+				}
+				continue
+			}
+
+			if ch == '<' && i+1 < len(trimmed) {
+				if strings.HasPrefix(trimmed[i:], "<!--") {
+					inComment = true
+					continue
+				}
+				if strings.HasPrefix(trimmed[i:], "<?") {
+					inPI = true
+					continue
+				}
+				if strings.HasPrefix(trimmed[i:], "<![CDATA[") {
+					inCDATA = true
+					continue
+				}
+				if trimmed[i+1] == '/' {
+					tagCount--
+				} else {
+					tagCount++
+					inTag = true
+				}
 			}
 			if ch == '>' && inTag {
 				inTag = false
-			}
-			if ch == '<' && i+1 < len(trimmed) && trimmed[i+1] == '/' {
-				tagCount--
 			}
 		}
 
@@ -631,10 +699,14 @@ func (p *Parser) parseResponse() (*ast.Response, error) {
 	}
 	resp.Version = version
 	resp.Status = status
+	p.pos = len(p.lineStr)
 
 	for p.nextLine() {
 		line := p.currentLine()
-		if line == "" || isMethod(line) || strings.HasPrefix(line, "import ") || strings.HasPrefix(line, "export ") {
+		if line == "" {
+			continue
+		}
+		if isMethod(line) || strings.HasPrefix(line, "import ") || strings.HasPrefix(line, "export ") {
 			return resp, nil
 		}
 
@@ -661,10 +733,12 @@ func (p *Parser) parseResponse() (*ast.Response, error) {
 				return nil, err
 			}
 			resp.Body = body
+			p.pos = len(p.lineStr)
 			return resp, nil
 		case strings.Contains(line, ":") && !strings.HasPrefix(line, "["):
 			hdr := p.parseHeader(line)
 			resp.Headers = append(resp.Headers, hdr)
+			p.pos = len(p.lineStr)
 		default:
 			if looksLikeBody(line) {
 				body, err := p.parseBody()
@@ -672,6 +746,7 @@ func (p *Parser) parseResponse() (*ast.Response, error) {
 					return nil, err
 				}
 				resp.Body = body
+				p.pos = len(p.lineStr)
 				return resp, nil
 			}
 		}
@@ -684,7 +759,10 @@ func (p *Parser) parseCaptures() ([]ast.Capture, error) {
 	var captures []ast.Capture
 	for p.nextLine() {
 		line := p.currentLine()
-		if line == "" || isSection(line) || isMethod(line) || isResponseStatus(line) {
+		if line == "" {
+			continue
+		}
+		if isSection(line) || isMethod(line) || isResponseStatus(line) {
 			p.unreadLine()
 			return captures, nil
 		}
@@ -714,7 +792,7 @@ func (p *Parser) parseCapture(line string) (*ast.Capture, error) {
 
 	redact := false
 	rest = strings.TrimSpace(rest)
-	if rest == "redact" || strings.HasSuffix(rest, " redact") {
+	if rest == "redact" {
 		redact = true
 	}
 
@@ -730,7 +808,10 @@ func (p *Parser) parseAsserts() ([]ast.Assert, error) {
 	var asserts []ast.Assert
 	for p.nextLine() {
 		line := p.currentLine()
-		if line == "" || isSection(line) || isMethod(line) || isResponseStatus(line) {
+		if line == "" {
+			continue
+		}
+		if isSection(line) || isMethod(line) || isResponseStatus(line) {
 			p.unreadLine()
 			return asserts, nil
 		}
@@ -845,47 +926,57 @@ func (p *Parser) parseQueryAndFilters(input string) (ast.Query, []ast.Filter, st
 
 	input = strings.TrimSpace(input)
 
-	filterNames := []string{
-		"base64UrlSafeDecode", "base64UrlSafeEncode",
-		"base64Decode", "base64Encode",
-		"daysAfterNow", "daysBeforeNow",
-		"urlQueryParam",
-		"replaceRegex",
-		"urlDecode", "urlEncode",
-		"utf8Decode", "utf8Encode",
-		"toHex", "toFloat", "toInt", "toString",
-		"toDate", "dateFormat",
-		"htmlEscape", "htmlUnescape",
-		"jsonpath", "xpath",
-		"location",
-		"count", "regex", "split", "first", "last",
-		"decode", "replace", "nth",
-		"upper", "lower",
+	type filterInfo struct {
+		name    string
+		noArg   bool
 	}
-
-	noArgFilters := map[string]bool{
-		"count": true, "first": true, "last": true,
-		"toInt": true, "toFloat": true, "toString": true,
-		"base64Decode": true, "base64Encode": true,
-		"base64UrlSafeDecode": true, "base64UrlSafeEncode": true,
-		"urlDecode": true, "urlEncode": true,
-		"toHex": true, "htmlEscape": true, "htmlUnescape": true,
-		"utf8Decode": true, "utf8Encode": true,
-		"location": true, "daysAfterNow": true, "daysBeforeNow": true,
-		"upper": true, "lower": true,
+	filterInfos := []filterInfo{
+		{"base64UrlSafeDecode", true},
+		{"base64UrlSafeEncode", true},
+		{"base64Decode", true},
+		{"base64Encode", true},
+		{"daysAfterNow", true},
+		{"daysBeforeNow", true},
+		{"urlQueryParam", false},
+		{"replaceRegex", false},
+		{"urlDecode", true},
+		{"urlEncode", true},
+		{"utf8Decode", true},
+		{"utf8Encode", true},
+		{"toHex", true},
+		{"toFloat", true},
+		{"toInt", true},
+		{"toString", true},
+		{"toDate", false},
+		{"dateFormat", false},
+		{"htmlEscape", true},
+		{"htmlUnescape", true},
+		{"jsonpath", false},
+		{"xpath", false},
+		{"location", true},
+		{"count", true},
+		{"regex", false},
+		{"split", false},
+		{"first", true},
+		{"last", true},
+		{"decode", false},
+		{"replace", false},
+		{"nth", false},
+		{"upper", true},
+		{"lower", true},
 	}
 
 	for {
 		matched := false
-		for _, fn := range filterNames {
+		for _, fi := range filterInfos {
+			fn := fi.name
 			if input == fn {
 				input = ""
 				matched = true
-				ft := filterNameToType(fn)
-				filters = append(filters, ast.Filter{Type: ft})
+				filters = append(filters, ast.Filter{Type: filterNameToType(fn)})
 				break
 			}
-			if noArgFilters[fn] {
+			if fi.noArg {
 				if strings.HasPrefix(input, fn+" ") {
 					input = strings.TrimSpace(input[len(fn):])
 					matched = true
@@ -1013,7 +1104,6 @@ func parsePredicate(input string) (ast.PredicateType, ast.AssertValue, error) {
 		{"isObject", ast.PredIsObject},
 		{"isString", ast.PredIsString},
 		{"isUuid", ast.PredIsUuid},
-		{"includes", ast.PredIncludes},
 		{"isCollection", ast.PredIsCollection},
 		{"isDate", ast.PredIsDate},
 	}
@@ -1221,7 +1311,7 @@ func filterNameToType(name string) ast.FilterType {
 	return ast.FilterCount
 }
 
-var httpMethods = []string{"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "TRACE", "CONNECT", "QUERY"}
+var httpMethods = []string{"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "TRACE", "CONNECT"}
 
 func isMethod(line string) bool {
 	for _, m := range httpMethods {

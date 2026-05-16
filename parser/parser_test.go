@@ -2,6 +2,8 @@ package parser
 
 import (
 	"testing"
+
+	"github.com/wei-lli/hurlx/ast"
 )
 
 func TestParseSimpleGet(t *testing.T) {
@@ -297,5 +299,215 @@ func TestParseMultilineBody(t *testing.T) {
 	}
 	if body.Type != 3 { // BodyMultiline
 		t.Errorf("expected multiline body, got %d", body.Type)
+	}
+}
+
+func TestParseAssertsWithBlankLines(t *testing.T) {
+	input := `GET https://example.org
+HTTP 200
+[Asserts]
+status == 200
+
+jsonpath "$.name" == "test"
+
+jsonpath "$.count" > 0
+
+header "Content-Type" contains "json"
+
+duration < 1000`
+
+	p := NewParser(input, "test.hurlx")
+	file, err := p.Parse()
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	asserts := file.Entries[0].Response.Asserts
+	if len(asserts) != 5 {
+		t.Fatalf("expected 5 asserts, got %d", len(asserts))
+	}
+	if asserts[0].Query.Type != ast.QueryStatus {
+		t.Errorf("expected QueryStatus, got %d", asserts[0].Query.Type)
+	}
+	if asserts[2].Value.Int != 0 {
+		t.Errorf("expected count > 0 value")
+	}
+	if asserts[4].Query.Type != ast.QueryDuration {
+		t.Errorf("expected QueryDuration, got %d", asserts[4].Query.Type)
+	}
+}
+
+func TestParseCapturesWithBlankLines(t *testing.T) {
+	input := `GET https://example.org
+HTTP 200
+[Captures]
+token: header "X-Auth-Token"
+
+user_id: jsonpath "$.id"
+
+name: jsonpath "$.name" regex "Mr (.*)"
+
+body_content: body`
+
+	p := NewParser(input, "test.hurlx")
+	file, err := p.Parse()
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	captures := file.Entries[0].Response.Captures
+	if len(captures) != 4 {
+		t.Fatalf("expected 4 captures, got %d", len(captures))
+	}
+	if captures[0].Variable != "token" {
+		t.Errorf("expected token, got %s", captures[0].Variable)
+	}
+	if captures[3].Variable != "body_content" {
+		t.Errorf("expected body_content, got %s", captures[3].Variable)
+	}
+}
+
+func TestParseQueryWithBlankLines(t *testing.T) {
+	input := `GET https://example.org
+[Query]
+q: hurlx
+
+page: 1
+
+limit: 10
+HTTP 200`
+
+	p := NewParser(input, "test.hurlx")
+	file, err := p.Parse()
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	entry := file.Entries[0]
+	if len(entry.Request.Query) != 3 {
+		t.Fatalf("expected 3 query params, got %d", len(entry.Request.Query))
+	}
+	if entry.Request.Query[2].Key != "limit" || entry.Request.Query[2].Value != "10" {
+		t.Errorf("expected limit=10, got %s=%s", entry.Request.Query[2].Key, entry.Request.Query[2].Value)
+	}
+}
+
+func TestParseFormWithBlankLines(t *testing.T) {
+	input := `POST https://example.org/login
+[Form]
+username: admin
+
+password: secret
+
+HTTP 302`
+
+	p := NewParser(input, "test.hurlx")
+	file, err := p.Parse()
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	entry := file.Entries[0]
+	if len(entry.Request.Form) != 2 {
+		t.Fatalf("expected 2 form params, got %d", len(entry.Request.Form))
+	}
+	if entry.Response.Status != 302 {
+		t.Errorf("expected status 302, got %d", entry.Response.Status)
+	}
+}
+
+func TestParseMultipartWithBlankLines(t *testing.T) {
+	input := `POST https://example.org/upload
+[Multipart]
+name: file.txt
+
+file1: file,data.bin;
+
+file2: file,image.png; image/png
+HTTP 200`
+
+	p := NewParser(input, "test.hurlx")
+	file, err := p.Parse()
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	req := file.Entries[0].Request
+	if len(req.Multipart) != 3 {
+		t.Fatalf("expected 3 multipart fields, got %d", len(req.Multipart))
+	}
+	if req.Multipart[1].IsFile != true {
+		t.Error("expected file field")
+	}
+}
+
+func TestParseOptionsWithBlankLines(t *testing.T) {
+	input := `GET https://example.org
+[Options]
+location: true
+
+retry: 3
+
+verbose: true
+HTTP 200`
+
+	p := NewParser(input, "test.hurlx")
+	file, err := p.Parse()
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	opts := file.Entries[0].Request.Options
+	if opts == nil {
+		t.Fatal("expected options")
+	}
+	if opts.Location == nil || !*opts.Location {
+		t.Error("expected location true")
+	}
+	if opts.Retry == nil || *opts.Retry != 3 {
+		t.Error("expected retry 3")
+	}
+}
+
+func TestParseResponseWithBlankLines(t *testing.T) {
+	input := `GET https://example.org
+HTTP 200
+Content-Type: application/json
+
+[Asserts]
+status == 200`
+
+	p := NewParser(input, "test.hurlx")
+	file, err := p.Parse()
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	resp := file.Entries[0].Response
+	if resp == nil {
+		t.Fatal("expected response")
+	}
+	if resp.Status != 200 {
+		t.Errorf("expected status 200, got %d", resp.Status)
+	}
+	if len(resp.Headers) != 1 {
+		t.Fatalf("expected 1 response header, got %d", len(resp.Headers))
+	}
+	if len(resp.Asserts) != 1 {
+		t.Fatalf("expected 1 assert, got %d", len(resp.Asserts))
+	}
+}
+
+func TestParseMultipleBlankLinesBetweenEntries(t *testing.T) {
+	input := `GET https://example.org/step1
+HTTP 200
+
+
+GET https://example.org/step2
+HTTP 200
+
+GET https://example.org/step3
+HTTP 200`
+
+	p := NewParser(input, "test.hurlx")
+	file, err := p.Parse()
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	if len(file.Entries) != 3 {
+		t.Fatalf("expected 3 entries, got %d", len(file.Entries))
 	}
 }
