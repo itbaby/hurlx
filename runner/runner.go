@@ -118,9 +118,14 @@ func NewRunner(opts RunOptions) *Runner {
 
 	if opts.Proxy != "" {
 		proxyURL, err := url.Parse(opts.Proxy)
-		if err == nil {
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: invalid proxy URL %q: %v\n", opts.Proxy, err)
+		} else {
 			transport.Proxy = http.ProxyURL(proxyURL)
 		}
+	}
+	if transport.Proxy == nil {
+		transport.Proxy = http.ProxyFromEnvironment
 	}
 
 	fileRoot := opts.FileRoot
