@@ -15,7 +15,7 @@ import (
 )
 
 var (
-	version = "1.0.15"
+	version = "1.0.16"
 
 	flagVariable        arrayFlags
 	flagVariablesFile   string
@@ -43,6 +43,10 @@ var (
 	flagDelay           string
 	flagRetry           int
 	flagRetryInterval   string
+	flagCACert          string
+	flagCert            string
+	flagKey             string
+	flagAWSSigV4        string
 	flagIPv4            bool
 	flagIPv6            bool
 	flagJSON            bool
@@ -102,6 +106,10 @@ func init() {
 	flag.StringVar(&flagDelay, "delay", "", "Delay between requests")
 	flag.IntVar(&flagRetry, "retry", 0, "Maximum number of retries")
 	flag.StringVar(&flagRetryInterval, "retry-interval", "1000ms", "Retry interval")
+	flag.StringVar(&flagCACert, "cacert", "", "CA certificate file")
+	flag.StringVar(&flagCert, "cert", "", "Client certificate file")
+	flag.StringVar(&flagKey, "key", "", "Client private key file")
+	flag.StringVar(&flagAWSSigV4, "aws-sigv4", "", "AWS Signature V4 profile")
 	flag.BoolVar(&flagIPv4, "ipv4", false, "Use IPv4 only")
 	flag.BoolVar(&flagIPv4, "4", false, "Use IPv4 only")
 	flag.BoolVar(&flagIPv6, "ipv6", false, "Use IPv6 only")
@@ -233,9 +241,22 @@ func main() {
 				User:            flagUser,
 				UserAgent:       flagUserAgent,
 				Trace:           flagTrace,
+				Delay:           runner.ParseDuration(flagDelay),
+				Retry:           flagRetry,
+				RetryInterval:   runner.ParseDuration(flagRetryInterval),
+				CACert:          flagCACert,
+				Cert:            flagCert,
+				Key:             flagKey,
+				IPv4:            flagIPv4,
+				IPv6:            flagIPv6,
 			}
 
-			r := runner.NewRunner(opts)
+			r, err := runner.NewRunner(opts)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				exitCode = 2
+				continue
+			}
 			result, err := r.Run(resolved.AllEntries)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error in %s: %v\n", file, err)

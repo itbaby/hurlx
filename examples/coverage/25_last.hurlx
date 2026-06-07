@@ -1,5 +1,4 @@
 GET https://httpbin.org/json
 HTTP 200
 [Asserts]
-jsonpath "$.slideshow.slides[1].title" isString
-jsonpath "$.slideshow.slides[1].title" last exists
+jsonpath "$.slideshow.slides" last isString

@@ -1315,7 +1315,7 @@ var httpMethods = []string{"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPT
 
 func isMethod(line string) bool {
 	for _, m := range httpMethods {
-		if strings.HasPrefix(line, m+" ") || line == m {
+		if strings.HasPrefix(line, m+" ") {
 			return true
 		}
 	}

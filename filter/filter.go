@@ -9,14 +9,46 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/antchfx/htmlquery"
 	"github.com/antchfx/xmlquery"
 	"github.com/wei-lli/hurlx/ast"
+	"github.com/wei-lli/hurlx/tmpl"
 	"golang.org/x/text/encoding/ianaindex"
 	"golang.org/x/text/transform"
 )
+
+// regexCache caches compiled regex patterns to avoid recompilation.
+var filterRegexCache struct {
+	mu    sync.RWMutex
+	cache map[string]*regexp.Regexp
+}
+
+func init() {
+	filterRegexCache.cache = make(map[string]*regexp.Regexp)
+}
+
+func compileFilterRegex(pattern string) (*regexp.Regexp, error) {
+	filterRegexCache.mu.RLock()
+	re, ok := filterRegexCache.cache[pattern]
+	filterRegexCache.mu.RUnlock()
+	if ok {
+		return re, nil
+	}
+	filterRegexCache.mu.Lock()
+	defer filterRegexCache.mu.Unlock()
+	if re, ok = filterRegexCache.cache[pattern]; ok {
+		return re, nil
+	}
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return nil, err
+	}
+	filterRegexCache.cache[pattern] = re
+	return re, nil
+}
 
 func Apply(value interface{}, filters []ast.Filter) (interface{}, error) {
 	var err error
@@ -230,17 +262,18 @@ func filterReplace(value interface{}, replaceStr string) (interface{}, error) {
 	return strings.ReplaceAll(str, parts[0], parts[1]), nil
 }
 
-const maxRegexPatternLen = 1024
+// MaxRegexPatternLen is the maximum allowed length for regex patterns.
+const MaxRegexPatternLen = 1024
 
 func filterRegex(value interface{}, pattern string) (interface{}, error) {
 	str, ok := value.(string)
 	if !ok {
 		return nil, fmt.Errorf("regex: expected string, got %T", value)
 	}
-	if len(pattern) > maxRegexPatternLen {
-		return nil, fmt.Errorf("regex: pattern exceeds maximum length of %d", maxRegexPatternLen)
+	if len(pattern) > MaxRegexPatternLen {
+		return nil, fmt.Errorf("regex: pattern exceeds maximum length of %d", MaxRegexPatternLen)
 	}
-	re, err := regexp.Compile(pattern)
+	re, err := compileFilterRegex(pattern)
 	if err != nil {
 		return nil, fmt.Errorf("regex: invalid pattern %q: %w", pattern, err)
 	}
@@ -260,10 +293,10 @@ func filterReplaceRegex(value interface{}, replaceStr string) (interface{}, erro
 	if len(parts) < 2 {
 		return nil, fmt.Errorf("replaceRegex: expected 'pattern replacement', got %q", replaceStr)
 	}
-	if len(parts[0]) > maxRegexPatternLen {
-		return nil, fmt.Errorf("replaceRegex: pattern exceeds maximum length of %d", maxRegexPatternLen)
+	if len(parts[0]) > MaxRegexPatternLen {
+		return nil, fmt.Errorf("replaceRegex: pattern exceeds maximum length of %d", MaxRegexPatternLen)
 	}
-	re, err := regexp.Compile(parts[0])
+	re, err := compileFilterRegex(parts[0])
 	if err != nil {
 		return nil, fmt.Errorf("replaceRegex: invalid pattern %q: %w", parts[0], err)
 	}
@@ -487,7 +520,7 @@ func encodeBase64URLSafe(data []byte) string {
 }
 
 func parseDate(s string, format string) (time.Time, error) {
-	goFormat := hurlFormatToGo(format)
+	goFormat := tmpl.HurlFormatToGo(format)
 	t, err := time.Parse(goFormat, s)
 	if err == nil {
 		return t, nil
@@ -504,41 +537,11 @@ func parseDate(s string, format string) (time.Time, error) {
 }
 
 func formatDate(t time.Time, format string) string {
-	goFormat := hurlFormatToGo(format)
+	goFormat := tmpl.HurlFormatToGo(format)
 	return t.Format(goFormat)
 }
 
-func hurlFormatToGo(format string) string {
-	if format == "%+" {
-		return time.RFC3339
-	}
-	replacements := []struct {
-		strftime string
-		goFmt    string
-	}{
-		{"%Y", "2006"},
-		{"%m", "01"},
-		{"%d", "02"},
-		{"%H", "15"},
-		{"%M", "04"},
-		{"%S", "05"},
-		{"%z", "-0700"},
-		{"%Z", "MST"},
-		{"%a", "Mon"},
-		{"%A", "Monday"},
-		{"%b", "Jan"},
-		{"%B", "January"},
-		{"%I", "03"},
-		{"%p", "PM"},
-		{"%j", "002"},
-		{"%W", "Mon"},
-	}
-	result := format
-	for _, r := range replacements {
-		result = strings.ReplaceAll(result, r.strftime, r.goFmt)
-	}
-	return result
-}
+// hurlFormatToGo removed - use tmpl.HurlFormatToGo instead
 
 func toTime(value interface{}) (time.Time, error) {
 	switch v := value.(type) {

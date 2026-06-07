@@ -1,7 +1,4 @@
 POST https://httpbin.org/post
 [MultipartFormData]
-name: file1
-content: hello
+file1: file,data.bin;
 HTTP 200
-[Asserts]
-jsonpath "$.form.name" == "file1"

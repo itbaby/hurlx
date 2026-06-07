@@ -67,7 +67,7 @@ func evaluateExpr(expr string, vars Variables) (interface{}, error) {
 		if arg == "" {
 			return time.Now().UTC().Format(time.RFC3339Nano), nil
 		}
-		goFormat := hurlFormatToGo(arg)
+		goFormat := HurlFormatToGo(arg)
 		return time.Now().UTC().Format(goFormat), nil
 	case strings.HasPrefix(expr, "randomHex"):
 		arg := strings.TrimSpace(strings.TrimPrefix(expr, "randomHex"))
@@ -138,9 +138,13 @@ func generateRandomHex(n int) (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
-// hurlFormatToGo converts Java-style date format patterns (as used in Hurl/README)
-// to Go time layout strings. Also supports strftime-style % patterns.
-func hurlFormatToGo(format string) string {
+// HurlFormatToGo converts Java-style and strftime-style date format patterns
+// to Go time layout strings.
+func HurlFormatToGo(format string) string {
+	if format == "%+" {
+		return time.RFC3339
+	}
+
 	// Java-style replacements (as shown in README examples)
 	javaReplacements := []struct {
 		java string

@@ -56,7 +56,7 @@ HTTP 200`
 	if entry.Request.Body == nil {
 		t.Fatal("expected body")
 	}
-	if entry.Request.Body.Type != 1 { // BodyJSON
+	if entry.Request.Body.Type != ast.BodyJSON {
 		t.Errorf("expected JSON body type")
 	}
 }
@@ -297,7 +297,7 @@ func TestParseMultilineBody(t *testing.T) {
 	if body == nil {
 		t.Fatal("expected body")
 	}
-	if body.Type != 3 { // BodyMultiline
+	if body.Type != ast.BodyMultiline {
 		t.Errorf("expected multiline body, got %d", body.Type)
 	}
 }

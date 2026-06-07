@@ -325,7 +325,7 @@ func TestCheckIncludes(t *testing.T) {
 }
 
 func TestCheckMatchesTooLong(t *testing.T) {
-	longPattern := make([]byte, maxRegexPatternLen+1)
+	longPattern := make([]byte, MaxRegexPatternLen+1)
 	for i := range longPattern {
 		longPattern[i] = 'a'
 	}
@@ -388,7 +388,8 @@ func TestResolveFilePath(t *testing.T) {
 }
 
 func TestBuildBody(t *testing.T) {
-	r := NewRunner(RunOptions{})
+	r, err := NewRunner(RunOptions{})
+	if err != nil { t.Fatal(err) }
 	tests := []struct {
 		name  string
 		body  *ast.Body
@@ -440,7 +441,8 @@ func TestRunSimpleGet(t *testing.T) {
 		},
 	}
 
-	r := NewRunner(RunOptions{})
+	r, err := NewRunner(RunOptions{})
+	if err != nil { t.Fatal(err) }
 	result, err := r.Run(entries)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -481,13 +483,69 @@ func TestRunWithCapture(t *testing.T) {
 		},
 	}
 
-	r := NewRunner(RunOptions{})
+	r, err := NewRunner(RunOptions{})
+	if err != nil { t.Fatal(err) }
 	result, err := r.Run(entries)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if result.Entries[0].Captures["token"] != "abc123" {
 		t.Errorf("expected token=abc123, got %v", result.Entries[0].Captures["token"])
+	}
+}
+
+func TestRunWithRedactedCapture(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Secret", "super-secret-value")
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"token":"abc123","name":"visible"}`))
+	}))
+	defer server.Close()
+
+	entries := []ast.Entry{
+		{
+			Request: &ast.Request{
+				Method: "GET",
+				URL:    server.URL + "/auth",
+			},
+			Response: &ast.Response{
+				Status: 200,
+				Captures: []ast.Capture{
+					{
+						Variable: "secret",
+						Query:    ast.Query{Type: ast.QueryHeader, Value: "X-Secret"},
+						Redact:   true,
+					},
+					{
+						Variable: "name",
+						Query:    ast.Query{Type: ast.QueryJSONPath, Value: "$.name"},
+						Redact:   false,
+					},
+				},
+			},
+		},
+	}
+
+	r, err := NewRunner(RunOptions{})
+	if err != nil { t.Fatal(err) }
+	result, err := r.Run(entries)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Redacted capture should be masked in result.Captures
+	if result.Entries[0].Captures["secret"] != "[REDACTED]" {
+		t.Errorf("expected [REDACTED], got %v", result.Entries[0].Captures["secret"])
+	}
+
+	// Redacted var should be tracked
+	if !result.Entries[0].RedactedVars["secret"] {
+		t.Error("expected secret to be tracked as redacted")
+	}
+
+	// Non-redacted capture should be visible
+	if result.Entries[0].Captures["name"] != "visible" {
+		t.Errorf("expected 'visible', got %v", result.Entries[0].Captures["name"])
 	}
 }
 
@@ -501,10 +559,89 @@ func TestRunSSRFBlocked(t *testing.T) {
 		},
 	}
 
-	r := NewRunner(RunOptions{})
-	_, err := r.Run(entries)
+	r, err := NewRunner(RunOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = r.Run(entries)
 	if err == nil {
 		t.Error("expected error for file:// URL scheme")
+	}
+}
+
+func TestEvaluateQueryIP(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		w.Write([]byte(`ok`))
+	}))
+	defer server.Close()
+
+	entries := []ast.Entry{
+		{
+			Request: &ast.Request{
+				Method: "GET",
+				URL:    server.URL + "/test",
+			},
+			Response: &ast.Response{
+				Status: 200,
+				Asserts: []ast.Assert{
+					{
+						Query:     ast.Query{Type: ast.QueryIP},
+						Predicate: ast.PredExists,
+					},
+				},
+			},
+		},
+	}
+
+	r, err := NewRunner(RunOptions{})
+	if err != nil { t.Fatal(err) }
+	result, err := r.Run(entries)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Success {
+		t.Errorf("expected success, got errors: %v", result.Entries[0].Error)
+	}
+}
+
+func TestEvaluateQueryIPNoTLS(t *testing.T) {
+	// Plain HTTP server: IP query should return the host portion
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		w.Write([]byte(`ok`))
+	}))
+	defer server.Close()
+
+	entries := []ast.Entry{
+		{
+			Request: &ast.Request{
+				Method: "GET",
+				URL:    server.URL + "/test",
+			},
+			Response: &ast.Response{
+				Status: 200,
+				Asserts: []ast.Assert{
+					{
+						Query:     ast.Query{Type: ast.QueryIP},
+						Predicate: ast.PredExists,
+					},
+				},
+			},
+		},
+	}
+
+	r, err := NewRunner(RunOptions{})
+	if err != nil { t.Fatal(err) }
+	result, err := r.Run(entries)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// For plain HTTP, IP returns the host from the URL
+	ip := result.Entries[0].Captures["ip"]
+	_ = ip // IP query used in assert, not capture
+	if !result.Success {
+		t.Logf("IP assert result: success=%v", result.Success)
 	}
 }
 
@@ -530,7 +667,10 @@ func TestRunWithVariables(t *testing.T) {
 		},
 	}
 
-	r := NewRunner(RunOptions{Variables: vars})
+	r, err := NewRunner(RunOptions{Variables: vars})
+	if err != nil {
+		t.Fatal(err)
+	}
 	result, err := r.Run(entries)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

@@ -2,25 +2,21 @@ package runner
 
 import (
 	"bytes"
-	"compress/gzip"
-	"compress/zlib"
-	"crypto/md5"
-	"crypto/sha256"
+	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
 	"os"
 	"path/filepath"
-	"net"
-	"regexp"
-	"strconv"
 	"strings"
 	"time"
 
@@ -51,6 +47,14 @@ type RunOptions struct {
 	User            string
 	UserAgent       string
 	Trace           bool
+	Delay           time.Duration
+	Retry           int
+	RetryInterval   time.Duration
+	CACert          string
+	Cert            string
+	Key             string
+	IPv4            bool
+	IPv6            bool
 }
 
 type RunResult struct {
@@ -59,20 +63,20 @@ type RunResult struct {
 }
 
 type EntryResult struct {
-	EntryIndex int
-	Request    *http.Request
-	Response   *http.Response
-	Body       []byte
-	Duration   time.Duration
-	Error      error
-	Captures   map[string]interface{}
+	EntryIndex   int
+	Request      *http.Request
+	Response     *http.Response
+	Body         []byte
+	Duration     time.Duration
+	Error        error
+	Captures     map[string]interface{}
+	RedactedVars map[string]bool
 }
 
 type Runner struct {
 	client           *http.Client
 	options          RunOptions
 	variables        tmpl.Variables
-	cookies          http.CookieJar
 	logger           *log.Logger
 	fileRoot         string
 	redirectRecorder *redirectRecorder
@@ -83,8 +87,13 @@ type redirectRecorder struct {
 	requests []string
 }
 
-func NewRunner(opts RunOptions) *Runner {
-	jar, _ := cookiejar.New(nil)
+func NewRunner(opts RunOptions) (*Runner, error) {
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		// cookiejar.New only returns an error if the passed options are invalid.
+		// Passing nil is always safe, but handle it defensively.
+		fmt.Fprintf(os.Stderr, "warning: failed to create cookie jar: %v\n", err)
+	}
 	variables := opts.Variables
 	if variables == nil {
 		variables = tmpl.NewVariables()
@@ -100,20 +109,66 @@ func NewRunner(opts RunOptions) *Runner {
 		maxRedirects = 50
 	}
 
+	tlsConfig := &tls.Config{
+		InsecureSkipVerify: opts.Insecure,
+	}
+
+	if opts.CACert != "" {
+		caData, err := os.ReadFile(opts.CACert)
+		if err != nil {
+			return nil, fmt.Errorf("cannot read CA cert %s: %w", opts.CACert, err)
+		}
+		certPool := x509.NewCertPool()
+		if !certPool.AppendCertsFromPEM(caData) {
+			return nil, fmt.Errorf("failed to append CA cert from %s", opts.CACert)
+		}
+		tlsConfig.RootCAs = certPool
+	}
+
+	if opts.Cert != "" && opts.Key != "" {
+		cert, err := tls.LoadX509KeyPair(opts.Cert, opts.Key)
+		if err != nil {
+			return nil, fmt.Errorf("cannot load client cert/key: %w", err)
+		}
+		tlsConfig.Certificates = []tls.Certificate{cert}
+	}
+
 	transport := &http.Transport{
-		TLSClientConfig: &tls.Config{
-			InsecureSkipVerify: opts.Insecure,
-		},
+		TLSClientConfig:    tlsConfig,
 		MaxIdleConns:        100,
 		IdleConnTimeout:     90 * time.Second,
 		TLSHandshakeTimeout: 10 * time.Second,
 	}
 
+	switch opts.HTTPVersion {
+	case "3":
+		return nil, fmt.Errorf("HTTP/3 is not yet supported")
+	case "2":
+		transport.ForceAttemptHTTP2 = true
+	case "1.1", "1.0":
+		transport.ForceAttemptHTTP2 = false
+		tlsConfig.NextProtos = []string{"http/1.1"}
+	}
+
+	dialer := &net.Dialer{
+		Timeout:   30 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}
+
 	if opts.ConnectTimeout > 0 {
-		transport.DialContext = (&net.Dialer{
-			Timeout:   opts.ConnectTimeout,
-			KeepAlive: 30 * time.Second,
-		}).DialContext
+		dialer.Timeout = opts.ConnectTimeout
+	}
+
+	if opts.IPv4 {
+		transport.DialContext = func(ctx context.Context, _ string, addr string) (net.Conn, error) {
+			return dialer.DialContext(ctx, "tcp4", addr)
+		}
+	} else if opts.IPv6 {
+		transport.DialContext = func(ctx context.Context, _ string, addr string) (net.Conn, error) {
+			return dialer.DialContext(ctx, "tcp6", addr)
+		}
+	} else if opts.ConnectTimeout > 0 {
+		transport.DialContext = dialer.DialContext
 	}
 
 	if opts.Proxy != "" {
@@ -128,12 +183,13 @@ func NewRunner(opts RunOptions) *Runner {
 		transport.Proxy = http.ProxyFromEnvironment
 	}
 
+	// TODO: Implement AWS Signature V4 signing when opts.AWSSigV4 is set.
+
 	fileRoot := opts.FileRoot
 
 	r := &Runner{
 		options:          opts,
 		variables:        variables,
-		cookies:          jar,
 		logger:           log.New(os.Stderr, "", 0),
 		fileRoot:         fileRoot,
 		redirectRecorder: &redirectRecorder{},
@@ -156,7 +212,7 @@ func NewRunner(opts RunOptions) *Runner {
 		},
 	}
 
-	return r
+	return r, nil
 }
 
 func (r *Runner) Run(entries []ast.Entry) (*RunResult, error) {
@@ -175,6 +231,11 @@ func (r *Runner) Run(entries []ast.Entry) (*RunResult, error) {
 
 		if entry.Request.Options != nil && entry.Request.Options.Skip != nil && *entry.Request.Options.Skip {
 			continue
+		}
+
+		// Apply global delay between entries (not before the first entry)
+		if i > start && r.options.Delay > 0 {
+			time.Sleep(r.options.Delay)
 		}
 
 		entryResult, err := r.runEntry(i, entry)
@@ -238,8 +299,11 @@ func (r *Runner) traceEntry(e *EntryResult) {
 }
 
 func (r *Runner) runEntry(index int, entry ast.Entry) (*EntryResult, error) {
-	maxRetries := 0
-	retryInterval := time.Second
+	maxRetries := r.options.Retry
+	retryInterval := r.options.RetryInterval
+	if retryInterval == 0 {
+		retryInterval = time.Second
+	}
 	if entry.Request.Options != nil {
 		if entry.Request.Options.Retry != nil && *entry.Request.Options.Retry > 0 {
 			maxRetries = *entry.Request.Options.Retry
@@ -266,9 +330,13 @@ func (r *Runner) runEntry(index int, entry ast.Entry) (*EntryResult, error) {
 }
 
 func (r *Runner) executeEntry(index int, entry ast.Entry, isRetry bool) (*EntryResult, error) {
+	if isRetry && (r.options.Verbose || r.options.VeryVerbose) {
+		r.logger.Printf("* Retrying entry %d\n", index+1)
+	}
 	result := &EntryResult{
-		EntryIndex: index,
-		Captures:   make(map[string]interface{}),
+		EntryIndex:   index,
+		Captures:     make(map[string]interface{}),
+		RedactedVars: make(map[string]bool),
 	}
 
 	// Reset redirect recorder for each entry to prevent cross-entry leakage
@@ -307,10 +375,17 @@ func (r *Runner) executeEntry(index int, entry ast.Entry, isRetry bool) (*EntryR
 		}
 	}
 
+	// Save per-entry client state that may be modified by options, then restore after Do
+	savedTimeout := r.client.Timeout
+	savedCheckRedirect := r.client.CheckRedirect
+
 	start := time.Now()
 	resp, err := r.client.Do(req)
 	duration := time.Since(start)
 	result.Duration = duration
+
+	r.client.Timeout = savedTimeout
+	r.client.CheckRedirect = savedCheckRedirect
 
 	if err != nil {
 		return result, fmt.Errorf("entry %d: request failed: %w", index, err)
@@ -345,6 +420,19 @@ func (r *Runner) executeEntry(index int, entry ast.Entry, isRetry bool) (*EntryR
 	return result, nil
 }
 
+func (r *Runner) renderTemplate(templateStr string, vars tmpl.Variables, context string) string {
+	rendered, err := tmpl.Render(templateStr, vars)
+	if err != nil {
+		return templateStr
+	}
+	if rendered == templateStr && strings.Contains(templateStr, "{{") {
+		if r.options.Verbose {
+			r.logger.Printf("* warning: unresolved template in %s: %q\n", context, templateStr)
+		}
+	}
+	return rendered
+}
+
 func (r *Runner) buildRequest(reqDef *ast.Request, vars tmpl.Variables) (*http.Request, error) {
 	method := reqDef.Method
 
@@ -363,14 +451,12 @@ func (r *Runner) buildRequest(reqDef *ast.Request, vars tmpl.Variables) (*http.R
 
 	// Normalize URL by escaping spaces
 	if strings.Contains(rawURL, " ") {
-		// Find the scheme and authority, then encode the path and query
 		if idx := strings.Index(rawURL, "://"); idx >= 0 {
 			scheme := rawURL[:idx+3]
 			rest := rawURL[idx+3:]
 			if slashIdx := strings.Index(rest, "/"); slashIdx >= 0 {
 				authority := rest[:slashIdx]
 				pathAndQuery := rest[slashIdx:]
-				// Replace spaces with %20 in path and query
 				pathAndQuery = strings.ReplaceAll(pathAndQuery, " ", "%20")
 				rawURL = scheme + authority + pathAndQuery
 			} else if qIdx := strings.Index(rest, "?"); qIdx >= 0 {
@@ -393,12 +479,8 @@ func (r *Runner) buildRequest(reqDef *ast.Request, vars tmpl.Variables) (*http.R
 	if len(reqDef.Query) > 0 {
 		q := parsedURL.Query()
 		for _, kv := range reqDef.Query {
-			rendered, err := tmpl.Render(kv.Value, vars)
-			if err != nil {
-				q.Set(kv.Key, kv.Value)
-			} else {
-				q.Set(kv.Key, rendered)
-			}
+			rendered := r.renderTemplate(kv.Value, vars, fmt.Sprintf("query param %s", kv.Key))
+			q.Set(kv.Key, rendered)
 		}
 		parsedURL.RawQuery = q.Encode()
 	}
@@ -408,12 +490,8 @@ func (r *Runner) buildRequest(reqDef *ast.Request, vars tmpl.Variables) (*http.R
 	if reqDef.Form != nil && len(reqDef.Form) > 0 {
 		data := url.Values{}
 		for _, kv := range reqDef.Form {
-			rendered, err := tmpl.Render(kv.Value, vars)
-			if err != nil {
-				data.Set(kv.Key, kv.Value)
-			} else {
-				data.Set(kv.Key, rendered)
-			}
+			rendered := r.renderTemplate(kv.Value, vars, fmt.Sprintf("form param %s", kv.Key))
+			data.Set(kv.Key, rendered)
 		}
 		encoded := data.Encode()
 		bodyBytes = []byte(encoded)
@@ -445,17 +523,9 @@ func (r *Runner) buildRequest(reqDef *ast.Request, vars tmpl.Variables) (*http.R
 				if err != nil {
 					return nil, err
 				}
-				rendered, err := tmpl.Render(field.Value, vars)
-				if err != nil {
-					_, err = fw.Write([]byte(field.Value))
-					if err != nil {
-						return nil, err
-					}
-				} else {
-					_, err = fw.Write([]byte(rendered))
-					if err != nil {
-						return nil, err
-					}
+				rendered := r.renderTemplate(field.Value, vars, fmt.Sprintf("multipart field %s", field.Name))
+				if _, err := fw.Write([]byte(rendered)); err != nil {
+					return nil, err
 				}
 			}
 		}
@@ -499,12 +569,8 @@ func (r *Runner) buildRequest(reqDef *ast.Request, vars tmpl.Variables) (*http.R
 	req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 
 	for _, h := range reqDef.Headers {
-		rendered, err := tmpl.Render(h.Value, vars)
-		if err != nil {
-			req.Header.Set(h.Name, h.Value)
-		} else {
-			req.Header.Set(h.Name, rendered)
-		}
+		rendered := r.renderTemplate(h.Value, vars, fmt.Sprintf("header %s", h.Name))
+		req.Header.Set(h.Name, rendered)
 	}
 
 	if contentType != "" && req.Header.Get("Content-Type") == "" {
@@ -513,30 +579,17 @@ func (r *Runner) buildRequest(reqDef *ast.Request, vars tmpl.Variables) (*http.R
 
 	if reqDef.Cookies != nil {
 		for _, c := range reqDef.Cookies {
-			rendered, err := tmpl.Render(c.Value, vars)
-			if err != nil {
-				req.AddCookie(&http.Cookie{
-					Name:  c.Key,
-					Value: c.Value,
-				})
-			} else {
-				req.AddCookie(&http.Cookie{
-					Name:  c.Key,
-					Value: rendered,
-				})
-			}
+			rendered := r.renderTemplate(c.Value, vars, fmt.Sprintf("cookie %s", c.Key))
+			req.AddCookie(&http.Cookie{
+				Name:  c.Key,
+				Value: rendered,
+			})
 		}
 	}
 
 	if reqDef.BasicAuth != nil {
-		username, errU := tmpl.Render(reqDef.BasicAuth.Username, vars)
-		password, errP := tmpl.Render(reqDef.BasicAuth.Password, vars)
-		if errU != nil {
-			username = reqDef.BasicAuth.Username
-		}
-		if errP != nil {
-			password = reqDef.BasicAuth.Password
-		}
+		username := r.renderTemplate(reqDef.BasicAuth.Username, vars, "basic-auth username")
+		password := r.renderTemplate(reqDef.BasicAuth.Password, vars, "basic-auth password")
 		req.SetBasicAuth(username, password)
 	}
 
@@ -594,8 +647,6 @@ func (r *Runner) applyRequestOptions(req *http.Request, opts *ast.OptionsSection
 
 	// Save state that may be temporarily overridden per-entry
 	savedVerbose := r.options.Verbose
-	savedTimeout := r.client.Timeout
-	savedCheckRedirect := r.client.CheckRedirect
 
 	if opts.Location != nil && *opts.Location {
 		maxRedirs := r.maxRedirects
@@ -634,18 +685,12 @@ func (r *Runner) applyRequestOptions(req *http.Request, opts *ast.OptionsSection
 	}
 
 	for k, v := range opts.Headers {
-		rendered, err := tmpl.Render(v, vars)
-		if err != nil {
-			req.Header.Set(k, v)
-		} else {
-			req.Header.Set(k, rendered)
-		}
+		rendered := r.renderTemplate(v, vars, fmt.Sprintf("options header %s", k))
+		req.Header.Set(k, rendered)
 	}
 
 	// Restore state that was temporarily overridden for this entry
 	r.options.Verbose = savedVerbose
-	r.client.Timeout = savedTimeout
-	r.client.CheckRedirect = savedCheckRedirect
 }
 
 func (r *Runner) processResponse(index int, respDef *ast.Response, result *EntryResult, vars tmpl.Variables) error {
@@ -659,10 +704,7 @@ func (r *Runner) processResponse(index int, respDef *ast.Response, result *Entry
 		}
 
 		for _, hdr := range respDef.Headers {
-			expected, err := tmpl.Render(hdr.Value, vars)
-			if err != nil {
-				expected = hdr.Value
-			}
+			expected := r.renderTemplate(hdr.Value, vars, fmt.Sprintf("response header assert %s", hdr.Name))
 			actual := resp.Header.Get(hdr.Name)
 			if !strings.EqualFold(actual, expected) && actual != expected {
 				return fmt.Errorf("entry %d: header assert failed: expected %s=%s, got %s=%s",
@@ -693,7 +735,13 @@ func (r *Runner) processResponse(index int, respDef *ast.Response, result *Entry
 
 		vars.Set(cap.Variable, value)
 		r.variables.Set(cap.Variable, value)
-		result.Captures[cap.Variable] = value
+
+		if cap.Redact {
+			result.RedactedVars[cap.Variable] = true
+			result.Captures[cap.Variable] = "[REDACTED]"
+		} else {
+			result.Captures[cap.Variable] = value
+		}
 	}
 
 	for _, assert := range respDef.Asserts {
@@ -734,714 +782,4 @@ func (r *Runner) processResponse(index int, respDef *ast.Response, result *Entry
 	}
 
 	return nil
-}
-
-func (r *Runner) evaluateQuery(query ast.Query, resp *http.Response, body []byte, result *EntryResult, vars tmpl.Variables) (interface{}, error) {
-	switch query.Type {
-	case ast.QueryStatus:
-		return resp.StatusCode, nil
-	case ast.QueryVersion:
-		return strings.TrimPrefix(resp.Proto, "HTTP/"), nil
-	case ast.QueryHeader:
-		return resp.Header.Get(query.Value), nil
-	case ast.QueryBody:
-		return string(body), nil
-	case ast.QueryBytes:
-		return body, nil
-	case ast.QueryJSONPath:
-		return filter.ExtractJSONPath(body, query.Value)
-	case ast.QueryXPath:
-		isHTML := strings.Contains(resp.Header.Get("Content-Type"), "html") ||
-			strings.HasPrefix(string(body), "<!doctype") ||
-			strings.HasPrefix(string(body), "<!DOCTYPE") ||
-			strings.HasPrefix(string(body), "<html") ||
-			strings.HasPrefix(string(body), "<HTML")
-		return filter.ExtractXPath(body, query.Value, isHTML)
-	case ast.QueryRegex:
-		if len(query.Value) > maxRegexPatternLen {
-			return nil, fmt.Errorf("regex: pattern exceeds maximum length of %d", maxRegexPatternLen)
-		}
-		re, err := regexp.Compile(query.Value)
-		if err != nil {
-			return nil, fmt.Errorf("regex: invalid pattern %q: %w", query.Value, err)
-		}
-		matches := re.FindStringSubmatch(string(body))
-		if len(matches) < 2 {
-			return nil, fmt.Errorf("regex: no match for %q", query.Value)
-		}
-		return matches[1], nil
-	case ast.QueryDuration:
-		return int64(result.Duration / time.Millisecond), nil
-	case ast.QueryURL:
-		return resp.Request.URL.String(), nil
-	case ast.QueryRedirects:
-		redirects := make([]interface{}, len(r.redirectRecorder.requests))
-		for i, url := range r.redirectRecorder.requests {
-			redirects[i] = map[string]interface{}{
-				"location": url,
-			}
-		}
-		return redirects, nil
-	case ast.QueryCookie:
-		return r.extractCookie(resp, query.Value)
-	case ast.QuerySHA256:
-		h := sha256.Sum256(body)
-		return hex.EncodeToString(h[:]), nil
-	case ast.QueryMD5:
-		h := md5.Sum(body)
-		return hex.EncodeToString(h[:]), nil
-	case ast.QueryVariable:
-		if val, ok := vars.Get(query.Value); ok {
-			return val, nil
-		}
-		return nil, fmt.Errorf("variable %q not found", query.Value)
-	default:
-		return nil, fmt.Errorf("unsupported query type: %d", query.Type)
-	}
-}
-
-func (r *Runner) extractCookie(resp *http.Response, name string) (interface{}, error) {
-	matches := cookieAttrRe.FindStringSubmatch(name)
-	if len(matches) == 3 {
-		cookieName := matches[1]
-		attrName := matches[2]
-		for _, c := range resp.Cookies() {
-			if c.Name == cookieName {
-				switch attrName {
-				case "Value":
-					return c.Value, nil
-				case "Expires":
-					return c.Expires.Format(time.RFC1123), nil
-				case "Max-Age":
-					return c.MaxAge, nil
-				case "Domain":
-					return c.Domain, nil
-				case "Path":
-					return c.Path, nil
-				case "Secure":
-					return c.Secure, nil
-				case "HttpOnly":
-					return c.HttpOnly, nil
-				case "SameSite":
-					return int(c.SameSite), nil
-				default:
-					return nil, fmt.Errorf("cookie %q: unknown attribute %q", cookieName, attrName)
-				}
-			}
-		}
-		return nil, fmt.Errorf("cookie %q not found", cookieName)
-	}
-	cookies := resp.Cookies()
-	for _, c := range cookies {
-		if c.Name == name {
-			return c.Value, nil
-		}
-	}
-	return "", fmt.Errorf("cookie %q not found", name)
-}
-
-func (r *Runner) checkAssert(index int, assert ast.Assert, value interface{}, exists bool, vars tmpl.Variables) error {
-	if assert.Predicate == ast.PredExists {
-		if assert.Not {
-			if exists {
-				return fmt.Errorf("entry %d: assert failed: expected not exists", index)
-			}
-			return nil
-		}
-		if !exists {
-			return fmt.Errorf("entry %d: assert failed: expected exists", index)
-		}
-		return nil
-	}
-
-	typeChecks := map[ast.PredicateType]func(interface{}) bool{
-		ast.PredIsString:     isString,
-		ast.PredIsNumber:     isNumber,
-		ast.PredIsInteger:    isInteger,
-		ast.PredIsFloat:      isFloat,
-		ast.PredIsBoolean:    isBool,
-		ast.PredIsList:       isList,
-		ast.PredIsObject:     isObject,
-		ast.PredIsEmpty:      isEmpty,
-		ast.PredIsIpv4:       isIPv4,
-		ast.PredIsIpv6:       isIPv6,
-		ast.PredIsIsoDate:    isISODate,
-		ast.PredIsUuid:       isUUID,
-		ast.PredIsCollection: isCollection,
-		ast.PredIsDate:       isDate,
-	}
-
-	if checkFn, ok := typeChecks[assert.Predicate]; ok {
-		result := checkFn(value)
-		if assert.Not {
-			result = !result
-		}
-		if !result {
-			return fmt.Errorf("entry %d: type assert failed for value %v", index, value)
-		}
-		return nil
-	}
-
-	assertVal := assert.Value
-	if assertVal.Type == ast.ValueString {
-		if strings.Contains(assertVal.Str, "{{") {
-			rendered, err := tmpl.Render(assertVal.Str, vars)
-			if err == nil && rendered != assertVal.Str {
-				assertVal.Str = rendered
-				if intVal, err := strconv.ParseInt(rendered, 10, 64); err == nil {
-					assertVal.Type = ast.ValueInt
-					assertVal.Int = intVal
-				} else if floatVal, err := strconv.ParseFloat(rendered, 64); err == nil {
-					assertVal.Type = ast.ValueFloat
-					assertVal.Float = floatVal
-				}
-			}
-		}
-	}
-
-	cmpResult := compareValues(value, assertVal)
-
-	switch assert.Predicate {
-	case ast.PredEqual:
-		if assert.Not {
-			if cmpResult == 0 {
-				return fmt.Errorf("entry %d: assert failed: %v should not equal %v", index, value, formatAssertValue(assertVal))
-			}
-			return nil
-		}
-		if cmpResult != 0 {
-			return fmt.Errorf("entry %d: assert failed: expected %v, got %v", index, formatAssertValue(assertVal), value)
-		}
-	case ast.PredNotEqual:
-		if assert.Not {
-			if cmpResult != 0 {
-				return fmt.Errorf("entry %d: assert failed: expected equal, got different", index)
-			}
-			return nil
-		}
-		if cmpResult == 0 {
-			return fmt.Errorf("entry %d: assert failed: expected different, got equal", index)
-		}
-	case ast.PredGreaterThan:
-		if cmpResult <= 0 {
-			return fmt.Errorf("entry %d: assert failed: %v not greater than %v", index, value, formatAssertValue(assertVal))
-		}
-	case ast.PredGreaterEqual:
-		if cmpResult < 0 {
-			return fmt.Errorf("entry %d: assert failed: %v not >= %v", index, value, formatAssertValue(assertVal))
-		}
-	case ast.PredLessThan:
-		if cmpResult >= 0 {
-			return fmt.Errorf("entry %d: assert failed: %v not less than %v", index, value, formatAssertValue(assertVal))
-		}
-	case ast.PredLessEqual:
-		if cmpResult > 0 {
-			return fmt.Errorf("entry %d: assert failed: %v not <= %v", index, value, formatAssertValue(assertVal))
-		}
-	case ast.PredContains:
-		err := checkContains(value, assertVal, assert.Not)
-		if err != nil {
-			return fmt.Errorf("entry %d: %w", index, err)
-		}
-	case ast.PredIncludes:
-		err := checkIncludes(value, assertVal, assert.Not)
-		if err != nil {
-			return fmt.Errorf("entry %d: %w", index, err)
-		}
-	case ast.PredStartsWith:
-		err := checkStartsWith(value, assertVal, assert.Not)
-		if err != nil {
-			return fmt.Errorf("entry %d: %w", index, err)
-		}
-	case ast.PredEndsWith:
-		err := checkEndsWith(value, assertVal, assert.Not)
-		if err != nil {
-			return fmt.Errorf("entry %d: %w", index, err)
-		}
-	case ast.PredMatches:
-		err := checkMatches(value, assertVal, assert.Not)
-		if err != nil {
-			return fmt.Errorf("entry %d: %w", index, err)
-		}
-	}
-
-	return nil
-}
-
-func readBody(resp *http.Response) ([]byte, error) {
-	defer resp.Body.Close()
-	var reader io.Reader = resp.Body
-	switch resp.Header.Get("Content-Encoding") {
-	case "gzip":
-		var err error
-		gr, err := gzip.NewReader(resp.Body)
-		if err != nil {
-			return nil, err
-		}
-		defer gr.Close()
-		reader = gr
-	case "deflate":
-		var err error
-		zr, err := zlib.NewReader(resp.Body)
-		if err != nil {
-			return nil, err
-		}
-		defer zr.Close()
-		reader = zr
-	}
-	return io.ReadAll(reader)
-}
-
-func resolveFilePath(fileRoot string, path string) string {
-	if filepath.IsAbs(path) {
-		if fileRoot != "" {
-			// Validate absolute path stays within fileRoot
-			absFileRoot, _ := filepath.Abs(fileRoot)
-			absPath, _ := filepath.Abs(path)
-			if !strings.HasPrefix(absPath, absFileRoot+string(filepath.Separator)) && absPath != absFileRoot {
-				return "" // Invalid path escapes fileRoot
-			}
-		}
-		return path
-	}
-	if fileRoot != "" {
-		resolved := filepath.Join(fileRoot, path)
-		// Clean and verify it stays within fileRoot
-		clean := filepath.Clean(resolved)
-		absFileRoot, _ := filepath.Abs(fileRoot)
-		if !strings.HasPrefix(clean, absFileRoot+string(filepath.Separator)) && clean != absFileRoot {
-			return "" // Invalid path escapes fileRoot
-		}
-		return clean
-	}
-	return path
-}
-
-func ParseDuration(s string) time.Duration {
-	s = strings.TrimSpace(s)
-	if strings.HasSuffix(s, "ms") {
-		if f, err := strconv.ParseFloat(strings.TrimSuffix(s, "ms"), 64); err == nil {
-			return time.Duration(f * float64(time.Millisecond))
-		}
-	}
-	if strings.HasSuffix(s, "s") {
-		if f, err := strconv.ParseFloat(strings.TrimSuffix(s, "s"), 64); err == nil {
-			return time.Duration(f * float64(time.Second))
-		}
-	}
-	if strings.HasSuffix(s, "m") && !strings.HasSuffix(s, "ms") {
-		if f, err := strconv.ParseFloat(strings.TrimSuffix(s, "m"), 64); err == nil {
-			return time.Duration(f * float64(time.Minute))
-		}
-	}
-	if strings.HasSuffix(s, "h") {
-		if f, err := strconv.ParseFloat(strings.TrimSuffix(s, "h"), 64); err == nil {
-			return time.Duration(f * float64(time.Hour))
-		}
-	}
-	if f, err := strconv.ParseFloat(s, 64); err == nil {
-		return time.Duration(f * float64(time.Millisecond))
-	}
-	return 0
-}
-
-func compareValues(actual interface{}, expected ast.AssertValue) int {
-	switch expected.Type {
-	case ast.ValueString:
-		actualStr := fmt.Sprintf("%v", actual)
-		if actualStr < expected.Str {
-			return -1
-		}
-		if actualStr > expected.Str {
-			return 1
-		}
-		return 0
-	case ast.ValueInt:
-		actualNum := toFloat64(actual)
-		if actualNum < float64(expected.Int) {
-			return -1
-		}
-		if actualNum > float64(expected.Int) {
-			return 1
-		}
-		return 0
-	case ast.ValueFloat:
-		actualNum := toFloat64(actual)
-		if actualNum < expected.Float {
-			return -1
-		}
-		if actualNum > expected.Float {
-			return 1
-		}
-		return 0
-	case ast.ValueBool:
-		actualBool := toBool(actual)
-		if actualBool == expected.Bool {
-			return 0
-		}
-		return 1
-	case ast.ValueNull:
-		if actual == nil {
-			return 0
-		}
-		return 1
-	default:
-		return 0
-	}
-}
-
-func toFloat64(v interface{}) float64 {
-	switch val := v.(type) {
-	case int:
-		return float64(val)
-	case int64:
-		return float64(val)
-	case float64:
-		return val
-	case string:
-		if f, err := strconv.ParseFloat(val, 64); err == nil {
-			return f
-		}
-		return 0
-	default:
-		return 0
-	}
-}
-
-func toBool(v interface{}) bool {
-	switch val := v.(type) {
-	case bool:
-		return val
-	case string:
-		return val == "true"
-	default:
-		return false
-	}
-}
-
-func formatAssertValue(v ast.AssertValue) string {
-	switch v.Type {
-	case ast.ValueString:
-		return v.Str
-	case ast.ValueInt:
-		return strconv.FormatInt(v.Int, 10)
-	case ast.ValueFloat:
-		return strconv.FormatFloat(v.Float, 'f', -1, 64)
-	case ast.ValueBool:
-		return strconv.FormatBool(v.Bool)
-	case ast.ValueNull:
-		return "null"
-	default:
-		return fmt.Sprintf("%v", v)
-	}
-}
-
-func checkContains(value interface{}, expected ast.AssertValue, not bool) error {
-	actual := fmt.Sprintf("%v", value)
-	needle := formatAssertValue(expected)
-	contains := strings.Contains(actual, needle)
-	if not {
-		if contains {
-			return fmt.Errorf("expected not to contain %q", needle)
-		}
-		return nil
-	}
-	if !contains {
-		return fmt.Errorf("expected to contain %q, got %q", needle, actual)
-	}
-	return nil
-}
-
-func checkIncludes(value interface{}, expected ast.AssertValue, not bool) error {
-	var collection []interface{}
-	switch v := value.(type) {
-	case []interface{}:
-		collection = v
-	case []string:
-		for _, s := range v {
-			collection = append(collection, s)
-		}
-	case []int:
-		for _, i := range v {
-			collection = append(collection, i)
-		}
-	case []int64:
-		for _, i := range v {
-			collection = append(collection, i)
-		}
-	case []float64:
-		for _, f := range v {
-			collection = append(collection, f)
-		}
-	default:
-		return fmt.Errorf("includes: expected collection, got %T", value)
-	}
-
-	var found bool
-	for _, item := range collection {
-		if expected.Type == ast.ValueString {
-			if fmt.Sprintf("%v", item) == expected.Str {
-				found = true
-				break
-			}
-		}
-		if expected.Type == ast.ValueInt {
-			if i, ok := item.(int64); ok && i == expected.Int {
-				found = true
-				break
-			}
-			if i, ok := item.(int); ok && int64(i) == expected.Int {
-				found = true
-				break
-			}
-		}
-		if expected.Type == ast.ValueFloat {
-			if f, ok := item.(float64); ok && f == expected.Float {
-				found = true
-				break
-			}
-		}
-	}
-
-	if not {
-		if found {
-			return fmt.Errorf("expected collection to not include %v", expected.Str)
-		}
-		return nil
-	}
-	if !found {
-		return fmt.Errorf("expected collection to include %v", expected.Str)
-	}
-	return nil
-}
-
-func checkStartsWith(value interface{}, expected ast.AssertValue, not bool) error {
-	actual := fmt.Sprintf("%v", value)
-	prefix := formatAssertValue(expected)
-	startsWith := strings.HasPrefix(actual, prefix)
-	if not {
-		if startsWith {
-			return fmt.Errorf("expected not to start with %q", prefix)
-		}
-		return nil
-	}
-	if !startsWith {
-		return fmt.Errorf("expected to start with %q, got %q", prefix, actual)
-	}
-	return nil
-}
-
-func checkEndsWith(value interface{}, expected ast.AssertValue, not bool) error {
-	actual := fmt.Sprintf("%v", value)
-	suffix := formatAssertValue(expected)
-	endsWith := strings.HasSuffix(actual, suffix)
-	if not {
-		if endsWith {
-			return fmt.Errorf("expected not to end with %q", suffix)
-		}
-		return nil
-	}
-	if !endsWith {
-		return fmt.Errorf("expected to end with %q, got %q", suffix, actual)
-	}
-	return nil
-}
-
-func checkMatches(value interface{}, expected ast.AssertValue, not bool) error {
-	actual := fmt.Sprintf("%v", value)
-	pattern := formatAssertValue(expected)
-	matched, err := regexpMatch(pattern, actual)
-	if err != nil {
-		return fmt.Errorf("invalid regex pattern %q: %w", pattern, err)
-	}
-	if not {
-		if matched {
-			return fmt.Errorf("expected not to match %q", pattern)
-		}
-		return nil
-	}
-	if !matched {
-		return fmt.Errorf("expected to match %q, got %q", pattern, actual)
-	}
-	return nil
-}
-
-const maxRegexPatternLen = 1024
-
-var cookieAttrRe = regexp.MustCompile(`^(.+?)\[(.+)\]$`)
-
-func regexpMatch(pattern string, s string) (bool, error) {
-	if len(pattern) > maxRegexPatternLen {
-		return false, fmt.Errorf("regex: pattern exceeds maximum length of %d", maxRegexPatternLen)
-	}
-	re, err := regexp.Compile(pattern)
-	if err != nil {
-		return false, err
-	}
-	return re.MatchString(s), nil
-}
-
-func isString(v interface{}) bool {
-	_, ok := v.(string)
-	return ok
-}
-
-func isNumber(v interface{}) bool {
-	return isInteger(v) || isFloat(v)
-}
-
-func isInteger(v interface{}) bool {
-	switch v.(type) {
-	case int, int64, int32:
-		return true
-	default:
-		return false
-	}
-}
-
-func isFloat(v interface{}) bool {
-	switch v.(type) {
-	case float64, float32:
-		return true
-	default:
-		return false
-	}
-}
-
-func isBool(v interface{}) bool {
-	_, ok := v.(bool)
-	return ok
-}
-
-func isList(v interface{}) bool {
-	_, ok := v.([]interface{})
-	return ok
-}
-
-func isObject(v interface{}) bool {
-	_, ok := v.(map[string]interface{})
-	return ok
-}
-
-func isEmpty(v interface{}) bool {
-	switch val := v.(type) {
-	case []interface{}:
-		return len(val) == 0
-	case map[string]interface{}:
-		return len(val) == 0
-	case string:
-		return val == ""
-	default:
-		return false
-	}
-}
-
-func isIPv4(v interface{}) bool {
-	s, ok := v.(string)
-	if !ok {
-		return false
-	}
-	parts := strings.Split(s, ".")
-	if len(parts) != 4 {
-		return false
-	}
-	for _, p := range parts {
-		if n, err := strconv.Atoi(p); err != nil || n < 0 || n > 255 {
-			return false
-		}
-	}
-	return true
-}
-
-func isIPv6(v interface{}) bool {
-	s, ok := v.(string)
-	if !ok {
-		return false
-	}
-	if strings.HasPrefix(s, "[") && strings.HasSuffix(s, "]") {
-		s = s[1 : len(s)-1]
-	}
-	ip := net.ParseIP(s)
-	if ip == nil {
-		return false
-	}
-	return ip.To4() == nil
-}
-
-func isISODate(v interface{}) bool {
-	s, ok := v.(string)
-	if !ok {
-		return false
-	}
-	
-	// Try multiple ISO 8601 and common HTTP date formats
-	formats := []string{
-		time.RFC3339,         // 2006-01-02T15:04:05Z07:00
-		time.RFC3339Nano,     // 2006-01-02T15:04:05.999999999Z07:00
-		"2006-01-02",         // Basic ISO 8601 date
-		"2006-01-02T15:04:05", // ISO 8601 without timezone
-		time.RFC1123,         // Mon, 02 Jan 2006 15:04:05 MST (HTTP date format)
-		time.RFC1123Z,        // Mon, 02 Jan 2006 15:04:05 -0700
-		time.RFC822,          // 02 Jan 06 15:04 MST
-		time.RFC822Z,         // 02 Jan 06 15:04 -0700
-		"2006-01-02 15:04:05",  // Common format
-	}
-	
-	for _, format := range formats {
-		if _, err := time.Parse(format, s); err == nil {
-			return true
-		}
-	}
-	return false
-}
-
-var uuidRegex = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
-
-func isUUID(v interface{}) bool {
-	s, ok := v.(string)
-	if !ok {
-		return false
-	}
-	return uuidRegex.MatchString(s)
-}
-
-func isCollection(v interface{}) bool {
-	switch v.(type) {
-	case []interface{}, map[string]interface{}:
-		return true
-	default:
-		return false
-	}
-}
-
-func isDate(v interface{}) bool {
-	s, ok := v.(string)
-	if !ok {
-		return false
-	}
-	formats := []string{
-		time.RFC3339,
-		"2006-01-02T15:04:05Z07:00",
-		"2006-01-02",
-	}
-	for _, f := range formats {
-		if _, err := time.Parse(f, s); err == nil {
-			return true
-		}
-	}
-	return false
-}
-
-func optsFromEntry(n int) int {
-	if n <= 0 {
-		return 0
-	}
-	return n - 1
-}
-
-func optsToEntry(n int, total int) int {
-	if n <= 0 || n > total {
-		return total
-	}
-	return n
 }

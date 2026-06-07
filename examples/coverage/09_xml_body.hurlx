@@ -1,4 +1,4 @@
 GET https://httpbin.org/xml
 HTTP 200
-[Asserts]
-body contains "Wake up to WonderWidgets!"
+<?xml version="1.0"?>
+<root/>

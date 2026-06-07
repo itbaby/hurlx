@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/wei-lli/hurlx/ast"
@@ -146,13 +147,19 @@ func (r *Resolver) buildResolved(file *ast.File, filePath string) (*ResolvedFile
 	seen := make(map[string]bool)
 	var addEntries func(imports map[string]*ResolvedFile)
 	addEntries = func(imports map[string]*ResolvedFile) {
-		for alias, resolved := range imports {
+		// Sort aliases for deterministic import order
+		aliases := make([]string, 0, len(imports))
+		for alias := range imports {
+			aliases = append(aliases, alias)
+		}
+		sort.Strings(aliases)
+		for _, alias := range aliases {
 			if seen[alias] {
 				continue
 			}
 			seen[alias] = true
-			addEntries(resolved.Imports)
-			entries = append(entries, resolved.File.Entries...)
+			addEntries(imports[alias].Imports)
+			entries = append(entries, imports[alias].File.Entries...)
 		}
 	}
 	addEntries(rf.Imports)
